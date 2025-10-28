@@ -7,6 +7,7 @@ CopyDC es un bot de utilidades para Discord centrado en simplificar la gestion d
 - **Recuperacion de origenes**: `c!get` devuelve el archivo de cualquier emoji o sticker previamente registrado.
 - **Automatizacion de hilos**: `c!thread add/remove/list` define reglas por canal para abrir hilos de forma inmediata.
 - **Canal de conteo asistido**: `c!counting` valida el flujo numerico y mantiene la secuencia sin intervencion manual.
+- **Reacciones automaticas**: `c!react` asocia palabras clave con emojis que se aplican automaticamente a mensajes coincidentes.
 - **Informes rapidos**: `c!user`, `c!roleinfo`, `c!serverinfo`, `c!boost` y `c!avatar` consolidan datos clave en embeds estructurados.
 - **Roles para boosters**: `/boostrole` gestiona asignaciones, auditorias y retiros programados mediante tareas asincronas.
 - **Panel propietario**: los cogs en `admin_modules/` ofrecen diagnosticos, sincronizacion de comandos y herramientas de depuracion exclusivas para `OWNER_ID`.
@@ -22,6 +23,7 @@ CopyDC/
 |   |-- expression_cog.py
 |   |-- threads_cog.py
 |   |-- counting_cog.py
+|   |-- auto_react_cog.py
 |   |-- boost_roles_cog.py
 |   `-- audit_kicks_cog.py
 |-- admin_modules/     # Herramientas exclusivas para el propietario

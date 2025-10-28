@@ -60,6 +60,18 @@ def setup_database():
     )
     """)
 
+    # Tabla para reacciones automáticas
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS auto_reactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id INTEGER NOT NULL,
+        trigger_word TEXT NOT NULL,
+        emojis TEXT NOT NULL,
+        case_sensitive INTEGER DEFAULT 0,
+        UNIQUE(guild_id, trigger_word)
+    )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -224,6 +236,61 @@ def delete_boost_role(guild_id: int, role_id: int):
     )
     conn.commit()
     conn.close()
+
+# --- Funciones para Auto Reactions ---
+def add_auto_reaction(guild_id: int, trigger_word: str, emojis: list):
+    """Añade o actualiza una configuración de reacción automática."""
+    import json
+    conn = get_db_connection()
+    emojis_json = json.dumps(emojis)
+    conn.execute(
+        "INSERT OR REPLACE INTO auto_reactions (guild_id, trigger_word, emojis, case_sensitive) "
+        "VALUES (?, ?, ?, 0)",
+        (guild_id, trigger_word.lower(), emojis_json)
+    )
+    conn.commit()
+    conn.close()
+
+def remove_auto_reaction(guild_id: int, trigger_word: str):
+    """Elimina una configuración de reacción automática."""
+    conn = get_db_connection()
+    conn.execute(
+        "DELETE FROM auto_reactions WHERE guild_id = ? AND trigger_word = ?",
+        (guild_id, trigger_word.lower())
+    )
+    conn.commit()
+    conn.close()
+
+def get_auto_reaction(guild_id: int, trigger_word: str) -> Optional[sqlite3.Row]:
+    """Obtiene una configuración específica de reacción automática."""
+    conn = get_db_connection()
+    row = conn.execute(
+        "SELECT * FROM auto_reactions WHERE guild_id = ? AND trigger_word = ?",
+        (guild_id, trigger_word.lower())
+    ).fetchone()
+    conn.close()
+    return row
+
+def get_all_auto_reactions(guild_id: int) -> List[sqlite3.Row]:
+    """Obtiene todas las configuraciones de reacciones automáticas de un servidor."""
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT * FROM auto_reactions WHERE guild_id = ? ORDER BY trigger_word",
+        (guild_id,)
+    ).fetchall()
+    conn.close()
+    return rows
+
+def clear_auto_reactions(guild_id: int):
+    """Elimina todas las configuraciones de reacciones automáticas de un servidor."""
+    conn = get_db_connection()
+    conn.execute(
+        "DELETE FROM auto_reactions WHERE guild_id = ?",
+        (guild_id,)
+    )
+    conn.commit()
+    conn.close()
+
 
 
 

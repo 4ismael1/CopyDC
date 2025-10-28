@@ -111,13 +111,54 @@ def get_help_embeds(lang: str = "es") -> List[discord.Embed]:
         )
         embed4.set_footer(text="Sección: Conteo")
 
-        # --- Sección 5: Boost Roles (slash commands) ---
+        # --- Sección 5: Reacciones Automáticas ---
         embed5 = discord.Embed(
+            title="😊 Ayuda: Módulo de Reacciones Automáticas",
+            description="Configura reacciones automáticas por palabras clave.",
+            color=0xE74C3C
+        )
+        embed5.add_field(
+            name="Agregar reacciones",
+            value=(
+                "• `c!react add <palabra> <emoji1> [emoji2] ...`\n"
+                "Configura hasta 20 reacciones para una palabra. Requiere `Gestionar Servidor`.\n"
+                "Ejemplo: `c!react add wlc 👋 💜 ✨ 🎉`"
+            ),
+            inline=False
+        )
+        embed5.add_field(
+            name="Eliminar reacciones",
+            value="• `c!react remove <palabra>` — Elimina las reacciones de una palabra específica.",
+            inline=False
+        )
+        embed5.add_field(
+            name="Ver configuración",
+            value="• `c!react list` — Muestra todas las palabras configuradas con sus reacciones.",
+            inline=False
+        )
+        embed5.add_field(
+            name="Limpiar todo",
+            value="• `c!react clear` — Elimina todas las configuraciones (requiere confirmación).",
+            inline=False
+        )
+        embed5.add_field(
+            name="Comportamiento",
+            value=(
+                "• Detecta palabras completas (case-insensitive).\n"
+                "• Soporta emojis Unicode y emojis custom del servidor.\n"
+                "• Las reacciones se aplican automáticamente cuando alguien usa la palabra."
+            ),
+            inline=False
+        )
+        embed5.set_footer(text="Sección: Reacciones Automáticas")
+
+        # --- Sección 6: Boost Roles (slash commands) ---
+        embed6 = discord.Embed(
             title="💜 Ayuda: Módulo Boost Roles",
             description="Gestión de roles exclusivos para boosters y roles normales (comandos slash).",
             color=0xA020F0
         )
-        embed5.add_field(
+        embed6.add_field(
             name="Asignación y estado",
             value=(
                 "• `/boostrole add user:<miembro> role:<rol> linked_to_boost:<True|False>`\n"
@@ -125,22 +166,22 @@ def get_help_embeds(lang: str = "es") -> List[discord.Embed]:
             ),
             inline=False
         )
-        embed5.add_field(
+        embed6.add_field(
             name="Eliminación",
             value="• `/boostrole remove user:<miembro> role:<rol>` — Quita el rol y borra su registro.",
             inline=False
         )
-        embed5.add_field(
+        embed6.add_field(
             name="Logs",
             value="• `/boostrole setlog channel:<#canal>` — Define el canal de logs del módulo.",
             inline=False
         )
-        embed5.add_field(
+        embed6.add_field(
             name="Listado",
             value="• `/boostrole list` — Lista la configuración con paginación.",
             inline=False
         )
-        embed5.add_field(
+        embed6.add_field(
             name="Automático",
             value=(
                 "• Al perder boost se retiran roles ligados.\n"
@@ -148,9 +189,9 @@ def get_help_embeds(lang: str = "es") -> List[discord.Embed]:
             ),
             inline=False
         )
-        embed5.set_footer(text="Sección: Boost Roles")
+        embed6.set_footer(text="Sección: Boost Roles")
 
-        return [embed1, embed2, embed3, embed4, embed5]
+        return [embed1, embed2, embed3, embed4, embed5, embed6]
 
     # ===================== ENGLISH =====================
     # --- Section 1: Expressions Module ---
@@ -251,8 +292,49 @@ def get_help_embeds(lang: str = "es") -> List[discord.Embed]:
     )
     embed4.set_footer(text="Section: Counting")
 
-    # --- Section 5: Boost Roles (slash commands) ---
+    # --- Section 5: Auto Reactions ---
     embed5 = discord.Embed(
+        title="😊 Help: Auto Reactions Module",
+        description="Configure automatic reactions for keywords.",
+        color=0xE74C3C
+    )
+    embed5.add_field(
+        name="Add reactions",
+        value=(
+            "• `c!react add <word> <emoji1> [emoji2] ...`\n"
+            "Configure up to 20 reactions for a word. Requires `Manage Server`.\n"
+            "Example: `c!react add wlc 👋 💜 ✨ 🎉`"
+        ),
+        inline=False
+    )
+    embed5.add_field(
+        name="Remove reactions",
+        value="• `c!react remove <word>` — Remove reactions for a specific word.",
+        inline=False
+    )
+    embed5.add_field(
+        name="View configuration",
+        value="• `c!react list` — Show all configured words with their reactions.",
+        inline=False
+    )
+    embed5.add_field(
+        name="Clear all",
+        value="• `c!react clear` — Remove all configurations (requires confirmation).",
+        inline=False
+    )
+    embed5.add_field(
+        name="Behavior",
+        value=(
+            "• Detects whole words (case-insensitive).\n"
+            "• Supports Unicode and custom server emojis.\n"
+            "• Reactions are applied automatically when someone uses the word."
+        ),
+        inline=False
+    )
+    embed5.set_footer(text="Section: Auto Reactions")
+
+    # --- Section 6: Boost Roles (slash commands) ---
+    embed6 = discord.Embed(
         title="💜 Help: Boost Roles Module",
         description="Manage booster-exclusive roles and regular roles (slash commands).",
         color=0xA020F0
@@ -288,7 +370,48 @@ def get_help_embeds(lang: str = "es") -> List[discord.Embed]:
         ),
         inline=False
     )
-    embed5.set_footer(text="Section: Boost Roles")
+    embed5.set_footer(text="Section: Auto Reactions")
+
+    # --- Section 6: Boost Roles (slash commands) ---
+    embed6 = discord.Embed(
+        title="💜 Help: Boost Roles Module",
+        description="Manage booster-exclusive roles and regular roles (slash commands).",
+        color=0xA020F0
+    )
+    embed6.add_field(
+        name="Assign & status",
+        value=(
+            "• `/boostrole add user:<member> role:<role> linked_to_boost:<True|False>`\n"
+            "Assign/update a role. If `linked_to_boost=True`, it's removed when the boost ends."
+        ),
+        inline=False
+    )
+    embed6.add_field(
+        name="Removal",
+        value="• `/boostrole remove user:<member> role:<role>` — Remove the role and delete its record.",
+        inline=False
+    )
+    embed6.add_field(
+        name="Logs",
+        value="• `/boostrole setlog channel:<#channel>` — Set the module log channel.",
+        inline=False
+    )
+    embed6.add_field(
+        name="List",
+        value="• `/boostrole list` — List the configuration with pagination.",
+        inline=False
+    )
+    embed6.add_field(
+        name="Automatic",
+        value=(
+            "• When a user loses boost, linked roles are removed.\n"
+            "• Audit every 12h to remove linked roles from users who no longer boost."
+        ),
+        inline=False
+    )
+    embed6.set_footer(text="Section: Boost Roles")
+
+    return [embed1, embed2, embed3, embed4, embed5, embed6]
 
     return [embed1, embed2, embed3, embed4, embed5]
 
@@ -301,6 +424,7 @@ def get_select_options(lang: str, current_index: int = 0) -> Tuple[List[discord.
             ("Threads", "Automatic threads", "⚙️"),
             ("Information", "Users, roles & server", "ℹ️"),
             ("Counting", "Numeric counting channel", "🎰"),
+            ("Auto Reactions", "Automatic emoji reactions", "😊"),
             ("Boost Roles", "Roles for boosters (slash)", "💜"),
         ]
         placeholder = "Choose a help section…"
@@ -310,6 +434,7 @@ def get_select_options(lang: str, current_index: int = 0) -> Tuple[List[discord.
             ("Hilos", "Hilos automáticos", "⚙️"),
             ("Información", "Usuarios, roles y servidor", "ℹ️"),
             ("Conteo", "Canal de conteo numérico", "🎰"),
+            ("Reacciones", "Reacciones automáticas", "😊"),
             ("Boost Roles", "Roles para boosters (slash)", "💜"),
         ]
         placeholder = "Elige una sección de ayuda…"
