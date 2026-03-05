@@ -1,5 +1,6 @@
 # modules/threads_cog.py
 import logging
+import time
 import discord
 from discord.ext import commands
 import database as db # <--- Importamos nuestro gestor de DB
@@ -9,6 +10,25 @@ log = logging.getLogger("bot")
 class ThreadsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._channel_cache = {}
+        self._cache_ttl_sec = 60.0
+
+    def _set_channel_cache(self, channel_id: int, config):
+        self._channel_cache[channel_id] = {
+            "expires_at": time.monotonic() + self._cache_ttl_sec,
+            "config": config,
+        }
+
+    def _get_channel_config_cached(self, channel_id: int):
+        now = time.monotonic()
+        cached = self._channel_cache.get(channel_id)
+        if cached and now < cached["expires_at"]:
+            return cached["config"]
+
+        row = db.get_thread_config_for_channel(channel_id)
+        config = dict(row) if row else None
+        self._set_channel_cache(channel_id, config)
+        return config
 
     @commands.group(name="thread", invoke_without_command=True)
     @commands.has_permissions(manage_channels=True)
@@ -27,6 +47,10 @@ class ThreadsCog(commands.Cog):
 
         # Guardamos la configuración en la base de datos
         db.add_thread_config(ctx.guild.id, channel.id, mode)
+        self._set_channel_cache(
+            channel.id,
+            {"guild_id": ctx.guild.id, "channel_id": channel.id, "mode": mode},
+        )
         await ctx.reply(f"✅ Hilos automáticos activados en {channel.mention} con modo **{mode}**.", mention_author=False)
 
     @thread.command(name="remove")
@@ -35,6 +59,7 @@ class ThreadsCog(commands.Cog):
         """Desactiva los hilos automáticos para un canal."""
         # Eliminamos la configuración de la base de datos
         db.remove_thread_config(channel.id)
+        self._set_channel_cache(channel.id, None)
         await ctx.reply(f"✅ Hilos automáticos desactivados en {channel.mention}.", mention_author=False)
 
     @thread.command(name="list")
@@ -61,7 +86,7 @@ class ThreadsCog(commands.Cog):
             return
 
         # Consultamos la configuración en vivo desde la base de datos
-        config = db.get_thread_config_for_channel(msg.channel.id)
+        config = self._get_channel_config_cached(msg.channel.id)
         if not config:
             return
 

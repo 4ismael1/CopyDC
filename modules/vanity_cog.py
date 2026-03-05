@@ -6,6 +6,7 @@ import discord
 from discord.ext import commands
 from discord import ui
 import re
+import time
 from database import (
     setup_vanity_table, get_vanity_settings, set_vanity_settings,
     get_vanity_codes, add_vanity_code, remove_vanity_code, delete_all_vanity
@@ -67,6 +68,45 @@ class VanityCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         setup_vanity_table()
+        self._settings_cache = {}
+        self._codes_cache = {}
+        self._cache_ttl_sec = 30.0
+
+    def _invalidate_guild_cache(self, guild_id: int):
+        self._settings_cache.pop(guild_id, None)
+        self._codes_cache.pop(guild_id, None)
+
+    def _get_settings_cached(self, guild_id: int) -> dict:
+        now = time.monotonic()
+        cached = self._settings_cache.get(guild_id)
+        if cached and now < cached["expires_at"]:
+            return dict(cached["value"])
+
+        settings = get_vanity_settings(guild_id) or {}
+        self._settings_cache[guild_id] = {
+            "expires_at": now + self._cache_ttl_sec,
+            "value": settings,
+        }
+        return dict(settings)
+
+    def _get_codes_cached(self, guild_id: int) -> list:
+        now = time.monotonic()
+        cached = self._codes_cache.get(guild_id)
+        if cached and now < cached["expires_at"]:
+            return [dict(item) for item in cached["value"]]
+
+        codes = get_vanity_codes(guild_id)
+        normalized = [dict(item) for item in codes]
+        self._codes_cache[guild_id] = {
+            "expires_at": now + self._cache_ttl_sec,
+            "value": normalized,
+        }
+        return [dict(item) for item in normalized]
+
+    def _refresh_guild_cache(self, guild_id: int):
+        self._invalidate_guild_cache(guild_id)
+        self._get_settings_cached(guild_id)
+        self._get_codes_cached(guild_id)
     
     def convert_emojis(self, text: str, guild: discord.Guild) -> str:
         """Convierte :emoji: al formato <:emoji:id> automáticamente."""
@@ -145,11 +185,11 @@ class VanityCog(commands.Cog):
         if after.status == discord.Status.offline:
             return
         
-        vanity_codes = get_vanity_codes(after.guild.id)
+        vanity_codes = self._get_codes_cached(after.guild.id)
         if not vanity_codes:
             return
         
-        settings = get_vanity_settings(after.guild.id) or {}
+        settings = self._get_settings_cached(after.guild.id)
         channel_id = settings.get('channel_id')
         channel = after.guild.get_channel(channel_id) if channel_id else None
         
@@ -203,8 +243,8 @@ class VanityCog(commands.Cog):
     @commands.guild_only()
     async def vanity(self, ctx: commands.Context):
         """Muestra el panel de configuración de vanity."""
-        settings = get_vanity_settings(ctx.guild.id) or {}
-        vanity_codes = get_vanity_codes(ctx.guild.id)
+        settings = self._get_settings_cached(ctx.guild.id)
+        vanity_codes = self._get_codes_cached(ctx.guild.id)
         
         embed = discord.Embed(
             title="🔗 Sistema de Vanity Roles",
@@ -275,10 +315,12 @@ class VanityCog(commands.Cog):
     async def vanity_add(self, ctx: commands.Context, codigo: str, rol: discord.Role):
         """Añade una vanity y su rol."""
         # Asegurar que exista settings
-        if not get_vanity_settings(ctx.guild.id):
+        if not self._get_settings_cached(ctx.guild.id):
             set_vanity_settings(ctx.guild.id)
+            self._refresh_guild_cache(ctx.guild.id)
         
         if add_vanity_code(ctx.guild.id, codigo.lower(), rol.id):
+            self._refresh_guild_cache(ctx.guild.id)
             embed = discord.Embed(
                 title="✅ Vanity Añadida",
                 description=f"**Código:** `{codigo}`\n**Rol:** {rol.mention}",
@@ -293,6 +335,7 @@ class VanityCog(commands.Cog):
     async def vanity_remove(self, ctx: commands.Context, codigo: str):
         """Elimina una vanity."""
         if remove_vanity_code(ctx.guild.id, codigo.lower()):
+            self._refresh_guild_cache(ctx.guild.id)
             await ctx.send(f"✅ Vanity `{codigo}` eliminada.")
         else:
             await ctx.send(f"❌ No existe la vanity `{codigo}`.")
@@ -302,6 +345,7 @@ class VanityCog(commands.Cog):
     async def vanity_channel(self, ctx: commands.Context, canal: discord.TextChannel = None):
         """Configura el canal de logs (cuando añaden vanity)."""
         set_vanity_settings(ctx.guild.id, channel_id=canal.id if canal else None)
+        self._refresh_guild_cache(ctx.guild.id)
         
         if canal:
             await ctx.send(f"✅ Canal de notificaciones (añadir) configurado: {canal.mention}")
@@ -313,6 +357,7 @@ class VanityCog(commands.Cog):
     async def vanity_remove_channel(self, ctx: commands.Context, canal: discord.TextChannel = None):
         """Configura el canal para notificaciones de removido."""
         set_vanity_settings(ctx.guild.id, remove_channel_id=canal.id if canal else None)
+        self._refresh_guild_cache(ctx.guild.id)
         
         if canal:
             await ctx.send(f"✅ Canal de notificaciones (removido) configurado: {canal.mention}")
@@ -323,11 +368,12 @@ class VanityCog(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def vanity_remove_notify(self, ctx: commands.Context):
         """Activa/desactiva notificaciones cuando quitan la vanity."""
-        settings = get_vanity_settings(ctx.guild.id) or {}
+        settings = self._get_settings_cached(ctx.guild.id)
         current = settings.get('remove_enabled', 0)
         new_value = 0 if current else 1
         
         set_vanity_settings(ctx.guild.id, remove_enabled=new_value)
+        self._refresh_guild_cache(ctx.guild.id)
         
         if new_value:
             await ctx.send("✅ Notificaciones de removido **activadas**.")
@@ -338,7 +384,7 @@ class VanityCog(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def vanity_list(self, ctx: commands.Context):
         """Muestra usuarios con vanity en su estado."""
-        vanity_codes = get_vanity_codes(ctx.guild.id)
+        vanity_codes = self._get_codes_cached(ctx.guild.id)
         
         if not vanity_codes:
             await ctx.send("❌ No hay vanitys configuradas.")
@@ -386,7 +432,7 @@ class VanityCog(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def vanity_embed(self, ctx: commands.Context):
         """Personaliza los embeds de notificación."""
-        settings = get_vanity_settings(ctx.guild.id) or {}
+        settings = self._get_settings_cached(ctx.guild.id)
         
         # Vista con botones
         class EmbedButtons(ui.View):
@@ -413,7 +459,8 @@ class VanityCog(commands.Cog):
                         embed_description=modal.new_desc,
                         embed_color=modal.new_color
                     )
-                    self.settings = get_vanity_settings(ctx.guild.id) or {}
+                    self.cog._refresh_guild_cache(ctx.guild.id)
+                    self.settings = self.cog._get_settings_cached(ctx.guild.id)
                     await interaction.followup.send("✅ Embed de añadido actualizado.", ephemeral=True)
             
             @ui.button(label="❌ Embed de Removido", style=discord.ButtonStyle.danger)
@@ -434,7 +481,8 @@ class VanityCog(commands.Cog):
                         remove_description=modal.new_desc,
                         remove_color=modal.new_color
                     )
-                    self.settings = get_vanity_settings(ctx.guild.id) or {}
+                    self.cog._refresh_guild_cache(ctx.guild.id)
+                    self.settings = self.cog._get_settings_cached(ctx.guild.id)
                     await interaction.followup.send("✅ Embed de removido actualizado.", ephemeral=True)
             
             @ui.button(label="👁️ Vista Previa", style=discord.ButtonStyle.secondary)
@@ -507,6 +555,7 @@ class VanityCog(commands.Cog):
         
         if view.confirmed:
             delete_all_vanity(ctx.guild.id)
+            self._invalidate_guild_cache(ctx.guild.id)
             embed.title = "✅ Configuración Eliminada"
             embed.description = "Toda la configuración de vanity ha sido borrada."
             embed.color = 0x57F287

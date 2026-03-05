@@ -1,11 +1,31 @@
 # modules/counting_cog.py
 import discord
 from discord.ext import commands
+import time
 import database as db
 
 class CountingCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._channel_cache = {}
+        self._cache_ttl_sec = 60.0
+
+    def _set_channel_cache(self, channel_id: int, channel_data):
+        self._channel_cache[channel_id] = {
+            "expires_at": time.monotonic() + self._cache_ttl_sec,
+            "data": channel_data,
+        }
+
+    def _get_channel_data_cached(self, channel_id: int):
+        now = time.monotonic()
+        cached = self._channel_cache.get(channel_id)
+        if cached and now < cached["expires_at"]:
+            return cached["data"]
+
+        row = db.get_counting_channel(channel_id)
+        data = dict(row) if row else None
+        self._set_channel_cache(channel_id, data)
+        return data
 
     @commands.group(name="counting", invoke_without_command=True)
     @commands.has_permissions(manage_channels=True)
@@ -19,6 +39,15 @@ class CountingCog(commands.Cog):
     async def set_channel(self, ctx: commands.Context, channel: discord.TextChannel):
         """Establece un canal para empezar a contar."""
         db.set_counting_channel(channel.id, ctx.guild.id)
+        self._set_channel_cache(
+            channel.id,
+            {
+                "channel_id": channel.id,
+                "guild_id": ctx.guild.id,
+                "current_number": 0,
+                "last_user_id": 0,
+            },
+        )
         await channel.send(f"✅ ¡Este canal ha sido configurado para contar! Si alguien se equivoca, volvemos a empezar. El primer número es el **1**.")
         try:
             await ctx.message.delete()
@@ -29,12 +58,15 @@ class CountingCog(commands.Cog):
     @commands.has_permissions(manage_channels=True)
     async def reset_channel(self, ctx: commands.Context):
         """Resetea el conteo en este canal a 0."""
-        channel_data = db.get_counting_channel(ctx.channel.id)
+        channel_data = self._get_channel_data_cached(ctx.channel.id)
         if not channel_data:
             await ctx.reply("Este canal no está configurado para contar.", mention_author=False)
             return
         
         db.reset_count(ctx.channel.id)
+        channel_data["current_number"] = 0
+        channel_data["last_user_id"] = 0
+        self._set_channel_cache(ctx.channel.id, channel_data)
         await ctx.reply("🔄 ¡El conteo ha sido reseteado! El siguiente número es el **1**.", mention_author=False)
 
     @commands.Cog.listener("on_message")
@@ -42,7 +74,7 @@ class CountingCog(commands.Cog):
         if message.author.bot or not message.guild:
             return
 
-        channel_data = db.get_counting_channel(message.channel.id)
+        channel_data = self._get_channel_data_cached(message.channel.id)
         if not channel_data:
             return
 
@@ -75,12 +107,18 @@ class CountingCog(commands.Cog):
         if sent_number != current_number + 1:
             await message.add_reaction("❌")
             db.reset_count(message.channel.id)
+            channel_data["current_number"] = 0
+            channel_data["last_user_id"] = 0
+            self._set_channel_cache(message.channel.id, channel_data)
             await message.reply(f"❌ ¡Número incorrecto! **El conteo se ha reiniciado**. El siguiente número es el **1**.", mention_author=False)
             return
             
         # Si todo es correcto
         await message.add_reaction("✅")
         db.update_count(message.channel.id, sent_number, message.author.id)
+        channel_data["current_number"] = sent_number
+        channel_data["last_user_id"] = message.author.id
+        self._set_channel_cache(message.channel.id, channel_data)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(CountingCog(bot))

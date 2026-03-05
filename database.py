@@ -3,17 +3,23 @@ import sqlite3
 from typing import List, Dict, Tuple, Optional
 
 DB_FILE = "bot_database.db"
+SQLITE_TIMEOUT_SEC = 8
+SQLITE_BUSY_TIMEOUT_MS = 5000
 
 def get_db_connection():
     """Crea y devuelve una conexión a la base de datos."""
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=SQLITE_TIMEOUT_SEC)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
     return conn
 
 def setup_database():
     """Crea las tablas de la base de datos si no existen."""
     conn = get_db_connection()
     cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
     
     # Tabla para roles exclusivos (boost o normales)
     cursor.execute("""
@@ -71,6 +77,11 @@ def setup_database():
         UNIQUE(guild_id, trigger_word)
     )
     """)
+
+    # Índices para lecturas frecuentes por servidor.
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_thread_configs_guild_id ON thread_configs(guild_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_boost_roles_guild_id ON boost_roles(guild_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_boost_roles_guild_linked ON boost_roles(guild_id, linked_to_boost)")
 
     conn.commit()
     conn.close()
@@ -346,21 +357,19 @@ def set_vanity_settings(guild_id: int, **kwargs):
     """Guarda la configuración general de vanity."""
     conn = get_db_connection()
     
-    existing = get_vanity_settings(guild_id)
-    if existing:
-        if kwargs:
-            set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
-            conn.execute(
-                f"UPDATE vanity_settings SET {set_clause} WHERE guild_id = ?",
-                list(kwargs.values()) + [guild_id]
-            )
-    else:
-        kwargs['guild_id'] = guild_id
-        columns = ", ".join(kwargs.keys())
-        placeholders = ", ".join("?" for _ in kwargs)
+    if not kwargs:
         conn.execute(
-            f"INSERT INTO vanity_settings ({columns}) VALUES ({placeholders})",
-            list(kwargs.values())
+            "INSERT OR IGNORE INTO vanity_settings (guild_id) VALUES (?)",
+            (guild_id,),
+        )
+    else:
+        columns = ["guild_id", *kwargs.keys()]
+        placeholders = ", ".join("?" for _ in columns)
+        update_clause = ", ".join(f"{k} = excluded.{k}" for k in kwargs.keys())
+        conn.execute(
+            f"INSERT INTO vanity_settings ({', '.join(columns)}) VALUES ({placeholders}) "
+            f"ON CONFLICT(guild_id) DO UPDATE SET {update_clause}",
+            [guild_id, *kwargs.values()],
         )
     
     conn.commit()
@@ -387,7 +396,10 @@ def add_vanity_code(guild_id: int, vanity_code: str, role_id: int) -> bool:
         conn.commit()
         conn.close()
         return True
-    except:
+    except sqlite3.IntegrityError:
+        conn.close()
+        return False
+    except sqlite3.Error:
         conn.close()
         return False
 
@@ -453,21 +465,19 @@ def set_clantag_settings(guild_id: int, **kwargs):
     """Guarda la configuración de clan tag."""
     conn = get_db_connection()
     
-    existing = get_clantag_settings(guild_id)
-    if existing:
-        if kwargs:
-            set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
-            conn.execute(
-                f"UPDATE clantag_settings SET {set_clause} WHERE guild_id = ?",
-                list(kwargs.values()) + [guild_id]
-            )
-    else:
-        kwargs['guild_id'] = guild_id
-        columns = ", ".join(kwargs.keys())
-        placeholders = ", ".join("?" for _ in kwargs)
+    if not kwargs:
         conn.execute(
-            f"INSERT INTO clantag_settings ({columns}) VALUES ({placeholders})",
-            list(kwargs.values())
+            "INSERT OR IGNORE INTO clantag_settings (guild_id) VALUES (?)",
+            (guild_id,),
+        )
+    else:
+        columns = ["guild_id", *kwargs.keys()]
+        placeholders = ", ".join("?" for _ in columns)
+        update_clause = ", ".join(f"{k} = excluded.{k}" for k in kwargs.keys())
+        conn.execute(
+            f"INSERT INTO clantag_settings ({', '.join(columns)}) VALUES ({placeholders}) "
+            f"ON CONFLICT(guild_id) DO UPDATE SET {update_clause}",
+            [guild_id, *kwargs.values()],
         )
     
     conn.commit()

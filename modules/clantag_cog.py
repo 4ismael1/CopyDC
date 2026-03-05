@@ -8,6 +8,7 @@ from discord import ui
 import re
 import aiohttp
 import asyncio
+import time
 from database import (
     setup_clantag_table, get_clantag_settings, set_clantag_settings, delete_clantag_settings
 )
@@ -72,11 +73,31 @@ class ClanTagCog(commands.Cog):
         self._clan_cache = {}  # {user_id: {'tag': str, 'badge': str, 'guild_id': int, 'expires': float}}
         # Anti-duplicados: {(guild_id, user_id): {'action': 'add'/'remove', 'time': float}}
         self._recent_actions = {}
-    
+        self._settings_cache = {}
+        self._settings_cache_ttl_sec = 30.0
+
+    def _invalidate_settings_cache(self, guild_id: int):
+        self._settings_cache.pop(guild_id, None)
+
+    def _get_settings_cached(self, guild_id: int) -> dict:
+        now = time.monotonic()
+        cached = self._settings_cache.get(guild_id)
+        if cached and now < cached["expires_at"]:
+            return dict(cached["value"])
+
+        settings = get_clantag_settings(guild_id) or {}
+        self._settings_cache[guild_id] = {
+            "expires_at": now + self._settings_cache_ttl_sec,
+            "value": settings,
+        }
+        return dict(settings)
+
+    def _refresh_settings_cache(self, guild_id: int):
+        self._invalidate_settings_cache(guild_id)
+        self._get_settings_cached(guild_id)
+
     async def fetch_user_clan(self, user_id: int) -> dict | None:
         """Obtiene el clan del usuario via API HTTP."""
-        import time
-        
         # Verificar cache (5 segundos)
         cached = self._clan_cache.get(user_id)
         if cached and time.time() < cached.get('expires', 0):
@@ -184,11 +205,10 @@ class ClanTagCog(commands.Cog):
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         """Detecta cuando un miembro cambia su clan tag."""
-        import time
         if after.bot:
             return
         
-        settings = get_clantag_settings(after.guild.id)
+        settings = self._get_settings_cached(after.guild.id)
         if not settings or not settings.get('role_id'):
             return
         
@@ -252,7 +272,7 @@ class ClanTagCog(commands.Cog):
     @commands.guild_only()
     async def clantag(self, ctx: commands.Context):
         """Muestra el panel de configuración de clan tag."""
-        settings = get_clantag_settings(ctx.guild.id) or {}
+        settings = self._get_settings_cached(ctx.guild.id)
         
         # Detectar clan tag del servidor (async)
         clan_tag = await self.get_guild_clan_tag(ctx.guild)
@@ -322,6 +342,7 @@ class ClanTagCog(commands.Cog):
     async def clantag_role(self, ctx: commands.Context, rol: discord.Role):
         """Configura el rol para usuarios con el clan tag."""
         set_clantag_settings(ctx.guild.id, role_id=rol.id)
+        self._refresh_settings_cache(ctx.guild.id)
         
         embed = discord.Embed(
             title="✅ Rol Configurado",
@@ -335,6 +356,7 @@ class ClanTagCog(commands.Cog):
     async def clantag_channel(self, ctx: commands.Context, canal: discord.TextChannel = None):
         """Configura el canal de notificaciones (cuando añaden tag)."""
         set_clantag_settings(ctx.guild.id, channel_id=canal.id if canal else None)
+        self._refresh_settings_cache(ctx.guild.id)
         
         if canal:
             await ctx.send(f"✅ Canal de notificaciones (añadir) configurado: {canal.mention}")
@@ -346,6 +368,7 @@ class ClanTagCog(commands.Cog):
     async def clantag_remove_channel(self, ctx: commands.Context, canal: discord.TextChannel = None):
         """Configura el canal para notificaciones de removido."""
         set_clantag_settings(ctx.guild.id, remove_channel_id=canal.id if canal else None)
+        self._refresh_settings_cache(ctx.guild.id)
         
         if canal:
             await ctx.send(f"✅ Canal de notificaciones (removido) configurado: {canal.mention}")
@@ -356,11 +379,12 @@ class ClanTagCog(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def clantag_remove_notify(self, ctx: commands.Context):
         """Activa/desactiva notificaciones cuando quitan el tag."""
-        settings = get_clantag_settings(ctx.guild.id) or {}
+        settings = self._get_settings_cached(ctx.guild.id)
         current = settings.get('remove_enabled', 0)
         new_value = 0 if current else 1
         
         set_clantag_settings(ctx.guild.id, remove_enabled=new_value)
+        self._refresh_settings_cache(ctx.guild.id)
         
         if new_value:
             await ctx.send("✅ Notificaciones de removido **activadas**.")
@@ -425,7 +449,7 @@ class ClanTagCog(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def clantag_embed(self, ctx: commands.Context):
         """Personaliza los embeds de notificación."""
-        settings = get_clantag_settings(ctx.guild.id) or {}
+        settings = self._get_settings_cached(ctx.guild.id)
         
         class EmbedButtons(ui.View):
             def __init__(self, cog, settings):
@@ -451,7 +475,8 @@ class ClanTagCog(commands.Cog):
                         embed_description=modal.new_desc,
                         embed_color=modal.new_color
                     )
-                    self.settings = get_clantag_settings(ctx.guild.id) or {}
+                    self.cog._refresh_settings_cache(ctx.guild.id)
+                    self.settings = self.cog._get_settings_cached(ctx.guild.id)
                     await interaction.followup.send("✅ Embed de añadido actualizado.", ephemeral=True)
             
             @ui.button(label="❌ Embed de Removido", style=discord.ButtonStyle.danger)
@@ -472,13 +497,14 @@ class ClanTagCog(commands.Cog):
                         remove_description=modal.new_desc,
                         remove_color=modal.new_color
                     )
-                    self.settings = get_clantag_settings(ctx.guild.id) or {}
+                    self.cog._refresh_settings_cache(ctx.guild.id)
+                    self.settings = self.cog._get_settings_cached(ctx.guild.id)
                     await interaction.followup.send("✅ Embed de removido actualizado.", ephemeral=True)
             
             @ui.button(label="👁️ Vista Previa", style=discord.ButtonStyle.secondary)
             async def preview(self, interaction: discord.Interaction, button: ui.Button):
                 fake_role = ctx.guild.roles[0]
-                clan_tag = self.cog.get_guild_clan_tag(ctx.guild) or "TAG"
+                clan_tag = await self.cog.get_guild_clan_tag(ctx.guild) or "TAG"
                 
                 embed_add = self.cog.build_embed(self.settings, ctx.author, clan_tag, fake_role, is_add=True)
                 embed_remove = self.cog.build_embed(self.settings, ctx.author, clan_tag, fake_role, is_add=False)
@@ -543,6 +569,7 @@ class ClanTagCog(commands.Cog):
         
         if view.confirmed:
             delete_clantag_settings(ctx.guild.id)
+            self._invalidate_settings_cache(ctx.guild.id)
             embed.title = "✅ Configuración Eliminada"
             embed.description = "Toda la configuración de clan tag ha sido borrada."
             embed.color = 0x57F287

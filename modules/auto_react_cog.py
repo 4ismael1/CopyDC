@@ -4,6 +4,7 @@ import discord
 import json
 import re
 import asyncio
+import time
 from discord.ext import commands
 import database as db
 
@@ -12,6 +13,25 @@ log = logging.getLogger("bot")
 class AutoReactCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._config_cache = {}
+        self._cache_ttl_sec = 30.0
+
+    def _invalidate_guild_cache(self, guild_id: int):
+        self._config_cache.pop(guild_id, None)
+
+    def _get_guild_configs_cached(self, guild_id: int):
+        now = time.monotonic()
+        cached = self._config_cache.get(guild_id)
+        if cached and now < cached["expires_at"]:
+            return cached["configs"]
+
+        rows = db.get_all_auto_reactions(guild_id)
+        configs = [dict(row) for row in rows]
+        self._config_cache[guild_id] = {
+            "expires_at": now + self._cache_ttl_sec,
+            "configs": configs,
+        }
+        return configs
 
     @commands.group(name="react", invoke_without_command=True)
     @commands.has_permissions(manage_guild=True)
@@ -75,6 +95,7 @@ class AutoReactCog(commands.Cog):
 
         # Guardar en la base de datos
         db.add_auto_reaction(ctx.guild.id, trigger_phrase, validated_emojis)
+        self._invalidate_guild_cache(ctx.guild.id)
         
         emoji_preview = " ".join(validated_emojis)
         await ctx.reply(
@@ -105,6 +126,7 @@ class AutoReactCog(commands.Cog):
             return
 
         db.remove_auto_reaction(ctx.guild.id, trigger_phrase)
+        self._invalidate_guild_cache(ctx.guild.id)
         await ctx.reply(
             f"✅ Reacciones automáticas eliminadas para **\"{trigger_phrase}\"**.",
             mention_author=False
@@ -113,7 +135,7 @@ class AutoReactCog(commands.Cog):
     @react.command(name="list")
     async def react_list(self, ctx: commands.Context):
         """Muestra todas las reacciones automáticas configuradas en el servidor."""
-        configs = db.get_all_auto_reactions(ctx.guild.id)
+        configs = self._get_guild_configs_cached(ctx.guild.id)
         
         if not configs:
             await ctx.reply(
@@ -155,7 +177,7 @@ class AutoReactCog(commands.Cog):
     @commands.has_permissions(manage_guild=True)
     async def react_clear(self, ctx: commands.Context):
         """Elimina TODAS las reacciones automáticas del servidor."""
-        configs = db.get_all_auto_reactions(ctx.guild.id)
+        configs = self._get_guild_configs_cached(ctx.guild.id)
         
         if not configs:
             await ctx.reply(
@@ -182,6 +204,7 @@ class AutoReactCog(commands.Cog):
             return
 
         db.clear_auto_reactions(ctx.guild.id)
+        self._invalidate_guild_cache(ctx.guild.id)
         await ctx.send(f"✅ Se eliminaron **{count}** configuración(es) de reacciones automáticas.")
 
     @commands.Cog.listener("on_message")
@@ -196,7 +219,7 @@ class AutoReactCog(commands.Cog):
             return
 
         # Obtener todas las configuraciones del servidor
-        configs = db.get_all_auto_reactions(message.guild.id)
+        configs = self._get_guild_configs_cached(message.guild.id)
         if not configs:
             return
 
