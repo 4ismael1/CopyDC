@@ -399,12 +399,7 @@ class DBHealthCog(commands.Cog):
     # Commands
     # ------------------------------------------------------------------
     def _can_use_commands(self, ctx: commands.Context) -> bool:
-        if ctx.author.id == ctx.bot.owner_id:
-            return True
-        if ctx.guild is None:
-            return False
-        perms = ctx.author.guild_permissions
-        return perms.administrator or perms.manage_guild
+        return ctx.author.id == ctx.bot.owner_id
 
     @commands.group(name="dbhealth", invoke_without_command=True)
     async def dbhealth(self, ctx: commands.Context):
@@ -594,4 +589,3 @@ class DBHealthCog(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(DBHealthCog(bot))
-
