@@ -107,7 +107,40 @@ def get_owner_help_embeds() -> List[discord.Embed]:
     )
     e4.set_footer(text="Módulo: logging_cog.py")
 
-    return [e1, e2, e3, e4]
+
+    # 5) DB Health
+    e5 = discord.Embed(
+        title="📊 DB Health — SQLite/Tráfico",
+        description="Monitoreo de rendimiento y tráfico para decidir cuándo migrar DB.",
+        color=discord.Color.green()
+    )
+    e5.add_field(
+        name="`c!dbhealth`",
+        value="Resumen general de estado, rendimiento y recomendación.",
+        inline=False
+    )
+    e5.add_field(
+        name="`c!dbhealth top`",
+        value="Top de operaciones de base de datos (conteo, latencia, errores).",
+        inline=False
+    )
+    e5.add_field(
+        name="`c!dbhealth guilds`",
+        value="Top de servidores por tráfico (mensajes/comandos/presence).",
+        inline=False
+    )
+    e5.add_field(
+        name="`c!dbhealth raw`",
+        value="Reporte completo en JSON (inline o archivo).",
+        inline=False
+    )
+    e5.add_field(
+        name="`c!dbhealth reset`",
+        value="Reinicia métricas acumuladas del monitor (owner).",
+        inline=False
+    )
+    e5.set_footer(text="Módulo: db_health_cog.py")
+    return [e1, e2, e3, e4, e5]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UI: Menú desplegable (Select) para secciones owner
@@ -120,6 +153,7 @@ class OwnerHelpSelect(ui.Select):
             discord.SelectOption(label="DevTools", description="Cargar/recargar módulos", value="1", emoji="🛠️"),
             discord.SelectOption(label="Exec", description="Ejecutar comandos de shell", value="2", emoji="💻"),
             discord.SelectOption(label="Logging", description="Registro en archivo", value="3", emoji="📜"),
+            discord.SelectOption(label="DB Health", description="Monitor SQLite y tráfico", value="4", emoji="📊"),
         ]
         super().__init__(placeholder="Elige una sección (owner)…", min_values=1, max_values=1, options=options)
         self.embeds = embeds
