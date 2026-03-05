@@ -215,7 +215,6 @@ class ClanTagCog(commands.Cog):
             try:
                 self._recent_actions[key] = {'action': 'add', 'time': now}
                 await after.add_roles(role, reason=f"Clan Tag: {clan_tag}")
-                print(f"[CLANTAG] ROL AÑADIDO a {after.name} ({clan_tag})")
                 
                 # Enviar embed
                 channel_id = settings.get('channel_id')
@@ -232,7 +231,6 @@ class ClanTagCog(commands.Cog):
             try:
                 self._recent_actions[key] = {'action': 'remove', 'time': now}
                 await after.remove_roles(role, reason="Clan Tag removido")
-                print(f"[CLANTAG] ROL QUITADO a {after.name}")
                 
                 # Enviar embed de removido si está habilitado
                 if settings.get('remove_enabled'):
