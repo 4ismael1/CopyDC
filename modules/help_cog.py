@@ -3,6 +3,9 @@ import discord
 from discord.ext import commands
 from typing import List, Tuple
 
+PRIVACY_URL = "https://copy.tyr.lat/privacy"
+TERMS_URL = "https://copy.tyr.lat/terms"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Generador de Embeds por idioma
 # ─────────────────────────────────────────────────────────────────────────────
@@ -47,6 +50,14 @@ def get_help_embeds(lang: str = "es") -> List[discord.Embed]:
                 "`c!react` — Reacciones automáticas\n"
                 "`c!thread` — Hilos automáticos\n"
                 "`c!counting` — Canal de conteo"
+            ),
+            inline=False
+        )
+        embed0.add_field(
+            name="🔒 Legal",
+            value=(
+                f"[Política de Privacidad]({PRIVACY_URL})\n"
+                f"[Términos y Condiciones]({TERMS_URL})"
             ),
             inline=False
         )
@@ -352,6 +363,14 @@ def get_help_embeds(lang: str = "es") -> List[discord.Embed]:
             "`c!react` — Auto reactions\n"
             "`c!thread` — Auto threads\n"
             "`c!counting` — Counting channel"
+        ),
+        inline=False
+    )
+    embed0.add_field(
+        name="🔒 Legal",
+        value=(
+            f"[Privacy Policy]({PRIVACY_URL})\n"
+            f"[Terms of Service]({TERMS_URL})"
         ),
         inline=False
     )
@@ -760,6 +779,9 @@ class HelpView(discord.ui.View):
         # Botones de idioma (activo/inactivo)
         self.add_item(LangButton("es", active=(self.lang == "es")))
         self.add_item(LangButton("en", active=(self.lang == "en")))
+        # Enlaces legales visibles en todas las secciones de help
+        self.add_item(discord.ui.Button(label="Privacy", style=discord.ButtonStyle.link, url=PRIVACY_URL, row=2))
+        self.add_item(discord.ui.Button(label="Terms", style=discord.ButtonStyle.link, url=TERMS_URL, row=2))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
