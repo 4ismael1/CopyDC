@@ -1,194 +1,224 @@
-# modules/help_owner_cog.py
 import os
 from typing import List
 
 import discord
-from discord.ext import commands
 from discord import ui
+from discord.ext import commands
 
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Utils (owner-only + silencio para no-owner)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def is_owner_check(ctx: commands.Context) -> bool:
     return ctx.author and ctx.author.id == OWNER_ID
 
+
 def owner_only():
     return commands.check(is_owner_check)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Embeds por módulo de owner
-# ─────────────────────────────────────────────────────────────────────────────
 
 def get_owner_help_embeds() -> List[discord.Embed]:
-    # 1) Owner (servers)
-    e1 = discord.Embed(
-        title="👑 Owner — Servidores",
-        description="Herramientas para **listar** e **inspeccionar** servidores desde Discord.",
-        color=discord.Color.gold()
+    overview = discord.Embed(
+        title="Owner Help - Resumen",
+        description="Comandos de admin cargados actualmente en el bot.",
+        color=discord.Color.gold(),
     )
-    e1.add_field(
-        name="`c!servers`",
-        value="Abre la **lista interactiva** de servidores (página 1). Usa el menú para elegir un servidor.",
-        inline=False
-    )
-    e1.add_field(
-        name="`c!servers list [página]`",
-        value="Abre la lista en la página indicada (1-indexed).",
-        inline=False
-    )
-    e1.add_field(
-        name="`c!servers info <ID|nombre>`",
+    overview.add_field(
+        name="Owner Core",
         value=(
-            "Abre la **ficha del servidor** con pestañas:\n"
-            "• Resumen\n• Miembros/Canales\n• Roles/Emojis\n• Seguridad/Nitro\n• Permisos del bot"
+            "`c!servers`\n"
+            "`c!slashsync [global|guild|all]`\n"
+            "`c!presence`\n"
+            "`c!ohelp`"
         ),
-        inline=False
+        inline=False,
     )
-    e1.set_footer(text="Módulo: owner_cog.py")
+    overview.add_field(
+        name="DevTools",
+        value="`c!dev`, `dev load`, `dev unload`, `dev reload`, `dev reloadall`, `dev list`, `dev info`",
+        inline=False,
+    )
+    overview.add_field(
+        name="DB Health",
+        value="`c!dbhealth`, `dbhealth top`, `dbhealth guilds`, `dbhealth raw`, `dbhealth reset`",
+        inline=False,
+    )
+    overview.add_field(
+        name="Perm Inspector",
+        value="`c!modcheck`, `modcheckall`, `why_modview`, `roleperms`, `auditroles`, `whocan`",
+        inline=False,
+    )
+    overview.add_field(
+        name="Logging",
+        value="Sin comandos. Registra `on_ready`, `on_guild_join`, `on_guild_remove` y errores.",
+        inline=False,
+    )
+    overview.set_footer(text="Ayuda generada para los admin_modules activos")
 
-    # 2) DevTools
-    e2 = discord.Embed(
-        title="🛠️ DevTools — Gestión de módulos",
-        description="Cargar/descargar/recargar cogs en caliente. Solo owner.",
-        color=discord.Color.blurple()
+    owner_core = discord.Embed(
+        title="Owner Core",
+        description="Inspeccion global del bot, sync y presencia.",
+        color=discord.Color.blurple(),
     )
-    e2.add_field(name="`c!dev`", value="Muestra los subcomandos disponibles.", inline=False)
-    e2.add_field(name="`c!dev load <mod>`", value="Carga `modules.<mod>`.", inline=False)
-    e2.add_field(name="`c!dev unload <mod>`", value="Descarga el módulo.", inline=False)
-    e2.add_field(name="`c!dev reload <mod>`", value="Recarga el módulo (o lo carga si no estaba).", inline=False)
-    e2.add_field(name="`c!dev reloadall`", value="Recarga **todos** los módulos cargados.", inline=False)
-    e2.add_field(name="`c!dev list [loaded|unloaded|all]`", value="Lista módulos por estado.", inline=False)
-    e2.add_field(name="`c!dev info <mod>`", value="Comandos registrados por el Cog.", inline=False)
-    e2.set_footer(text="Módulo: devtools_cog.py")
-
-    # 3) Exec (shell)
-    e3 = discord.Embed(
-        title="💻 Exec — Comandos de shell",
-        description="Ejecuta comandos en la shell del servidor (⚠️ uso bajo tu responsabilidad).",
-        color=discord.Color.red()
+    owner_core.add_field(
+        name="`c!servers` / `!servers`",
+        value="Abre la lista interactiva de servidores.",
+        inline=False,
     )
-    e3.add_field(
-        name="`c!exec <comando>`",
+    owner_core.add_field(
+        name="`servers list [pagina]`",
+        value="Abre la pagina indicada de la lista.",
+        inline=False,
+    )
+    owner_core.add_field(
+        name="`servers info <id|nombre>`",
+        value="Muestra la ficha del servidor con resumen, canales, roles, seguridad y permisos del bot.",
+        inline=False,
+    )
+    owner_core.add_field(
+        name="`c!slashsync [global|guild|all]` / `!slashsync ...`",
+        value="Sincroniza slash commands globalmente, en el guild actual o en ambos alcances.",
+        inline=False,
+    )
+    owner_core.add_field(
+        name="`c!presence` / `!presence`",
         value=(
-            "Ejecuta el comando y devuelve stdout/stderr (truncados si son muy largos).\n"
-            "Puedes enviar el comando envuelto en bloque ``` para mayor claridad."
+            "`custom <estado> <texto>` activa un status custom al instante.\n"
+            "`custom <estado> <emoji unicode> | <texto>` añade emoji visible.\n"
+            "`add <nombre> <tipo> <estado> <texto>` crea o actualiza presets.\n"
+            "`add <nombre> custom <estado> <emoji unicode> | <texto>` guarda preset custom.\n"
+            "`set <nombre>`, `list`, `remove <nombre>`, `clear` administran presets."
         ),
-        inline=False
+        inline=False,
     )
-    e3.add_field(
-        name="Timeout",
-        value="Corta a los **5 minutos** si el proceso no termina.",
-        inline=False
+    owner_core.add_field(
+        name="Tipos y estados",
+        value="Tipos: `custom`, `playing`, `listening`, `watching`, `competing`. Estados: `online`, `idle`, `dnd`, `invisible`.",
+        inline=False,
     )
-    e3.set_footer(text="Módulo: exec_cog.py")
+    owner_core.add_field(
+        name="Nota",
+        value="Discord no muestra custom emojis de servidor en el status de bots. Usa unicode, por ejemplo `🔗`.",
+        inline=False,
+    )
+    owner_core.set_footer(text="Modulo: owner_cog.py")
 
-    # 4) Logging (informativo)
-    e4 = discord.Embed(
-        title="📜 Logging — Registros a archivo",
-        description="Registra eventos y errores en `logs/bot.log` de forma automática.",
-        color=discord.Color.teal()
+    devtools = discord.Embed(
+        title="DevTools",
+        description="Carga y recarga de modulos de usuario en caliente.",
+        color=discord.Color.teal(),
     )
-    e4.add_field(
-        name="Qué hace",
+    devtools.add_field(name="`c!dev` / `!dev`", value="Muestra los subcomandos del modulo.", inline=False)
+    devtools.add_field(name="`dev load <mod>`", value="Carga `modules.<mod>`.", inline=False)
+    devtools.add_field(name="`dev unload <mod>`", value="Descarga `modules.<mod>`.", inline=False)
+    devtools.add_field(name="`dev reload <mod>`", value="Recarga el modulo o lo carga si no estaba activo.", inline=False)
+    devtools.add_field(name="`dev reloadall`", value="Recarga todas las extensiones cargadas.", inline=False)
+    devtools.add_field(name="`dev list [loaded|unloaded|all]`", value="Lista modulos por estado.", inline=False)
+    devtools.add_field(name="`dev info <mod>`", value="Muestra el cog cargado y sus comandos registrados.", inline=False)
+    devtools.set_footer(text="Modulo: devtools_cog.py")
+
+    db_health = discord.Embed(
+        title="DB Health",
+        description="Monitor de SQLite, trafico y recomendacion de escalado.",
+        color=discord.Color.green(),
+    )
+    db_health.add_field(name="`c!dbhealth` / `!dbhealth`", value="Resumen ejecutivo del estado de DB y trafico.", inline=False)
+    db_health.add_field(name="`dbhealth top`", value="Top de operaciones de DB por frecuencia y latencia.", inline=False)
+    db_health.add_field(name="`dbhealth guilds`", value="Top de servidores por trafico medido por el monitor.", inline=False)
+    db_health.add_field(name="`dbhealth raw`", value="Reporte JSON completo del snapshot y la recomendacion.", inline=False)
+    db_health.add_field(name="`dbhealth reset`", value="Resetea metricas acumuladas del monitor.", inline=False)
+    db_health.set_footer(text="Modulo: db_health_cog.py")
+
+    perms = discord.Embed(
+        title="Permission Inspector",
+        description="Auditoria de permisos de moderacion y gestion.",
+        color=discord.Color.orange(),
+    )
+    perms.add_field(name="`c!modcheck [@usuario] [#canal]`", value="Permisos efectivos en el canal actual o indicado.", inline=False)
+    perms.add_field(name="`c!modcheckall [@usuario]`", value="Auditoria completa del servidor para ese usuario.", inline=False)
+    perms.add_field(name="`c!why_modview [@usuario]`", value="Explica por que ese usuario ve la UI de moderacion.", inline=False)
+    perms.add_field(name="`c!roleperms @rol`", value="Lista permisos de gestion/moderacion del rol.", inline=False)
+    perms.add_field(name="`c!auditroles`", value="Audita roles con permisos de gestion y cuantos miembros los tienen.", inline=False)
+    perms.add_field(
+        name="`c!whocan <permiso> [#canal]`",
         value=(
-            "• Crea carpeta `logs/` si no existe.\n"
-            "• Añade un `FileHandler` al logger `bot`.\n"
-            "• Registra `on_ready`, `on_guild_join`, `on_guild_remove` y errores de comandos."
+            "Muestra quien tiene un permiso concreto.\n"
+            "Permisos validos: `administrator`, `manage_guild`, `manage_channels`, "
+            "`manage_roles`, `manage_webhooks`, `manage_emojis`, `manage_emojis_and_stickers`, "
+            "`manage_events`, `manage_threads`, `manage_nicknames`, `view_audit_log`, "
+            "`manage_messages`, `moderate_members`, `kick_members`, `ban_members`, "
+            "`move_members`, `mute_members`, `deafen_members`."
         ),
-        inline=False
+        inline=False,
     )
-    e4.add_field(
+    perms.set_footer(text="Modulo: perm_inspector_cog.py")
+
+    logging_info = discord.Embed(
+        title="Logging",
+        description="Registro automatico a archivo para eventos clave del bot.",
+        color=discord.Color.dark_teal(),
+    )
+    logging_info.add_field(
+        name="Que registra",
+        value="`on_ready`, `on_guild_join`, `on_guild_remove` y errores de comandos.",
+        inline=False,
+    )
+    logging_info.add_field(
+        name="Archivo",
+        value="Se escribe en `logs/bot.log` cuando el cog esta cargado.",
+        inline=False,
+    )
+    logging_info.add_field(
         name="Comandos",
-        value="No expone comandos. Funciona al cargar el Cog.",
-        inline=False
+        value="No expone comandos interactivos.",
+        inline=False,
     )
-    e4.set_footer(text="Módulo: logging_cog.py")
+    logging_info.set_footer(text="Modulo: logging_cog.py")
 
+    return [overview, owner_core, devtools, db_health, perms, logging_info]
 
-    # 5) DB Health
-    e5 = discord.Embed(
-        title="📊 DB Health — SQLite/Tráfico",
-        description="Monitoreo de rendimiento y tráfico para decidir cuándo migrar DB.",
-        color=discord.Color.green()
-    )
-    e5.add_field(
-        name="`c!dbhealth`",
-        value="Resumen general de estado, rendimiento y recomendación.",
-        inline=False
-    )
-    e5.add_field(
-        name="`c!dbhealth top`",
-        value="Top de operaciones de base de datos (conteo, latencia, errores).",
-        inline=False
-    )
-    e5.add_field(
-        name="`c!dbhealth guilds`",
-        value="Top de servidores por tráfico (mensajes/comandos/presence).",
-        inline=False
-    )
-    e5.add_field(
-        name="`c!dbhealth raw`",
-        value="Reporte completo en JSON (inline o archivo).",
-        inline=False
-    )
-    e5.add_field(
-        name="`c!dbhealth reset`",
-        value="Reinicia métricas acumuladas del monitor (owner).",
-        inline=False
-    )
-    e5.set_footer(text="Módulo: db_health_cog.py")
-    return [e1, e2, e3, e4, e5]
-
-# ─────────────────────────────────────────────────────────────────────────────
-# UI: Menú desplegable (Select) para secciones owner
-# ─────────────────────────────────────────────────────────────────────────────
 
 class OwnerHelpSelect(ui.Select):
     def __init__(self, embeds: List[discord.Embed]):
         options = [
-            discord.SelectOption(label="Servidores", description="Lista y ficha con pestañas", value="0", emoji="👑"),
-            discord.SelectOption(label="DevTools", description="Cargar/recargar módulos", value="1", emoji="🛠️"),
-            discord.SelectOption(label="Exec", description="Ejecutar comandos de shell", value="2", emoji="💻"),
-            discord.SelectOption(label="Logging", description="Registro en archivo", value="3", emoji="📜"),
-            discord.SelectOption(label="DB Health", description="Monitor SQLite y tráfico", value="4", emoji="📊"),
+            discord.SelectOption(label="Resumen", description="Todos los comandos admin activos", value="0"),
+            discord.SelectOption(label="Owner Core", description="Servers, slashsync y presence", value="1"),
+            discord.SelectOption(label="DevTools", description="Carga y recarga de modulos", value="2"),
+            discord.SelectOption(label="DB Health", description="Monitor SQLite y trafico", value="3"),
+            discord.SelectOption(label="Perm Inspector", description="Auditoria de permisos", value="4"),
+            discord.SelectOption(label="Logging", description="Registro en archivo", value="5"),
         ]
-        super().__init__(placeholder="Elige una sección (owner)…", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="Elige una seccion owner...", min_values=1, max_values=1, options=options)
         self.embeds = embeds
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.edit_message(embed=self.embeds[int(self.values[0])], view=self.view)
+
 
 class OwnerHelpView(ui.View):
     def __init__(self, embeds: List[discord.Embed]):
         super().__init__(timeout=180)
         self.add_item(OwnerHelpSelect(embeds))
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Cog
-# ─────────────────────────────────────────────────────────────────────────────
 
 class OwnerHelpCog(commands.Cog):
-    """Menú de ayuda para módulos del owner (solo visible para el owner)."""
+    """Menu de ayuda para modulos del owner."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # Silenciar intentos de no-owner: no responde y no loggea
     @commands.Cog.listener()
     async def on_command_error(self, ctx: commands.Context, err: commands.CommandError):
         if isinstance(err, commands.CheckFailure) and ctx.command and ctx.command.qualified_name.startswith("ohelp"):
-            return  # silencio total
+            return
 
     @commands.command(name="ohelp")
     @owner_only()
     async def owner_help(self, ctx: commands.Context):
-        """Muestra el menú de ayuda de módulos exclusivos del owner."""
+        """Muestra el menu de ayuda de modulos exclusivos del owner."""
         embeds = get_owner_help_embeds()
         view = OwnerHelpView(embeds)
         await ctx.reply(embed=embeds[0], view=view, mention_author=False)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(OwnerHelpCog(bot))

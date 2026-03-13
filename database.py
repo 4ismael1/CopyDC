@@ -6,6 +6,11 @@ DB_FILE = "bot_database.db"
 SQLITE_TIMEOUT_SEC = 8
 SQLITE_BUSY_TIMEOUT_MS = 5000
 
+
+def _column_exists(cursor: sqlite3.Cursor, table_name: str, column_name: str) -> bool:
+    columns = cursor.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return any(column["name"] == column_name for column in columns)
+
 def get_db_connection():
     """Crea y devuelve una conexión a la base de datos."""
     conn = sqlite3.connect(DB_FILE, timeout=SQLITE_TIMEOUT_SEC)
@@ -77,6 +82,20 @@ def setup_database():
         UNIQUE(guild_id, trigger_word)
     )
     """)
+
+    # Tabla para presets de presencia del bot (owner)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS bot_presence_presets (
+        name TEXT PRIMARY KEY,
+        activity_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        activity_text TEXT NOT NULL,
+        activity_emoji TEXT,
+        is_active INTEGER DEFAULT 0
+    )
+    """)
+    if not _column_exists(cursor, "bot_presence_presets", "activity_emoji"):
+        cursor.execute("ALTER TABLE bot_presence_presets ADD COLUMN activity_emoji TEXT")
 
     # Índices para lecturas frecuentes por servidor.
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_thread_configs_guild_id ON thread_configs(guild_id)")
@@ -299,6 +318,110 @@ def clear_auto_reactions(guild_id: int):
         "DELETE FROM auto_reactions WHERE guild_id = ?",
         (guild_id,)
     )
+    conn.commit()
+    conn.close()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# BOT PRESENCE PRESETS
+# ──────────────────────────────────────────────────────────────────────────────
+def upsert_bot_presence_preset(
+    name: str,
+    activity_type: str,
+    status: str,
+    activity_text: str,
+    activity_emoji: Optional[str] = None,
+):
+    """Crea o actualiza un preset de presencia."""
+    conn = get_db_connection()
+    existing = conn.execute(
+        "SELECT name FROM bot_presence_presets WHERE lower(name) = lower(?)",
+        (name,),
+    ).fetchone()
+    if existing:
+        conn.execute(
+            """
+            UPDATE bot_presence_presets
+            SET activity_type = ?, status = ?, activity_text = ?, activity_emoji = ?
+            WHERE name = ?
+            """,
+            (activity_type, status, activity_text, activity_emoji, existing["name"]),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO bot_presence_presets (name, activity_type, status, activity_text, activity_emoji)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (name, activity_type, status, activity_text, activity_emoji),
+        )
+    conn.commit()
+    conn.close()
+
+
+def list_bot_presence_presets() -> List[sqlite3.Row]:
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT * FROM bot_presence_presets ORDER BY is_active DESC, name COLLATE NOCASE"
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def get_bot_presence_preset(name: str) -> Optional[sqlite3.Row]:
+    conn = get_db_connection()
+    row = conn.execute(
+        "SELECT * FROM bot_presence_presets WHERE lower(name) = lower(?)",
+        (name,),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def set_active_bot_presence_preset(name: str) -> bool:
+    conn = get_db_connection()
+    row = conn.execute(
+        "SELECT name FROM bot_presence_presets WHERE lower(name) = lower(?)",
+        (name,),
+    ).fetchone()
+    if row is None:
+        conn.close()
+        return False
+
+    conn.execute("UPDATE bot_presence_presets SET is_active = 0")
+    conn.execute(
+        "UPDATE bot_presence_presets SET is_active = 1 WHERE name = ?",
+        (row["name"],),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_active_bot_presence_preset() -> Optional[sqlite3.Row]:
+    conn = get_db_connection()
+    row = conn.execute(
+        "SELECT * FROM bot_presence_presets WHERE is_active = 1 LIMIT 1"
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def delete_bot_presence_preset(name: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.execute(
+        "DELETE FROM bot_presence_presets WHERE lower(name) = lower(?)",
+        (name,),
+    )
+    conn.commit()
+    deleted = cursor.rowcount > 0
+    conn.close()
+    return deleted
+
+
+def clear_bot_presence_presets():
+    conn = get_db_connection()
+    conn.execute("DELETE FROM bot_presence_presets")
     conn.commit()
     conn.close()
 

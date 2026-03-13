@@ -14,6 +14,9 @@ from discord.ext import commands
 from discord import ui
 from dotenv import load_dotenv
 
+import database as db
+from command_utils import build_presence_activity, looks_like_custom_emoji_reference, resolve_presence_status, split_custom_status_input
+
 load_dotenv()
 OWNER_ID = int(os.getenv("OWNER_ID", 0))
 
@@ -54,6 +57,55 @@ def boost_bar(boosts: int, tier: int) -> str:
     return "⛽ " + "█" * filled + "░" * (total - filled) + f"  (Tier {tier} • {boosts})"
 
 # ─────────────── Embeds builders ───────────────
+
+PRESENCE_ACTIVITY_TYPES = ("custom", "playing", "listening", "watching", "competing")
+PRESENCE_STATUSES = ("online", "idle", "dnd", "invisible")
+
+
+def normalize_presence_activity_type(raw: str) -> Optional[str]:
+    value = (raw or "").strip().lower()
+    aliases = {
+        "custom": "custom",
+        "status": "custom",
+        "playing": "playing",
+        "game": "playing",
+        "listening": "listening",
+        "watching": "watching",
+        "watch": "watching",
+        "competing": "competing",
+        "competition": "competing",
+    }
+    return aliases.get(value)
+
+
+def normalize_presence_status(raw: str) -> Optional[str]:
+    value = (raw or "").strip().lower()
+    aliases = {
+        "online": "online",
+        "idle": "idle",
+        "afk": "idle",
+        "dnd": "dnd",
+        "busy": "dnd",
+        "invisible": "invisible",
+        "offline": "invisible",
+    }
+    return aliases.get(value)
+
+
+def build_presence_embed(row: Optional[dict], *, title: str = "Estado del bot") -> discord.Embed:
+    embed = discord.Embed(title=title, color=discord.Color.blurple())
+    if not row:
+        embed.description = "No hay ningun preset de presencia activo."
+        return embed
+
+    embed.add_field(name="Nombre", value=f"`{row['name']}`", inline=True)
+    embed.add_field(name="Tipo", value=f"`{row['activity_type']}`", inline=True)
+    embed.add_field(name="Estado", value=f"`{row['status']}`", inline=True)
+    if row.get("activity_emoji"):
+        embed.add_field(name="Emoji", value=row["activity_emoji"], inline=True)
+    embed.add_field(name="Texto", value=row["activity_text"], inline=False)
+    return embed
+
 
 def build_overview_embed(g: discord.Guild) -> discord.Embed:
     shard = getattr(g, "shard_id", None)
@@ -436,6 +488,252 @@ class OwnerCog(commands.Cog):
             return
         view = GuildInfoView(self.bot, g.id, OWNER_ID)
         await ctx.reply(embed=view.current_embed(), view=view, mention_author=False)
+
+    @commands.command(name="slashsync", aliases=["syncslash", "appsync"])
+    @owner_only()
+    async def slashsync_cmd(self, ctx: commands.Context, scope: str = "global"):
+        """Sincroniza slash commands globalmente o por guild."""
+        normalized = (scope or "global").strip().lower()
+        aliases = {
+            "global": "global",
+            "guild": "guild",
+            "server": "guild",
+            "all": "all",
+        }
+        normalized = aliases.get(normalized)
+        if normalized is None:
+            await ctx.reply("Uso: `c!slashsync [global|guild|all]`.", mention_author=False)
+            return
+
+        summary: list[str] = []
+
+        if normalized in {"global", "all"}:
+            synced = await self.bot.tree.sync()
+            summary.append(f"Global: {len(synced)} comando(s) sincronizado(s).")
+
+        if normalized == "guild":
+            if ctx.guild is None:
+                await ctx.reply(
+                    "Para `guild` debes usar el comando dentro de un servidor.",
+                    mention_author=False,
+                )
+                return
+            synced = await self.bot.tree.sync(guild=ctx.guild)
+            summary.append(f"Guild actual ({ctx.guild.name}): {len(synced)} comando(s) sincronizado(s).")
+        elif normalized == "all":
+            success = 0
+            failed: list[str] = []
+            for guild in self.bot.guilds:
+                try:
+                    await self.bot.tree.sync(guild=guild)
+                    success += 1
+                except discord.HTTPException:
+                    failed.append(f"{guild.name} ({guild.id})")
+
+            summary.append(f"Guilds: {success}/{len(self.bot.guilds)} sincronizados.")
+            if failed:
+                preview = ", ".join(failed[:5])
+                suffix = " ..." if len(failed) > 5 else ""
+                summary.append(f"Fallos: {preview}{suffix}")
+
+        await ctx.reply("\n".join(summary), mention_author=False)
+
+    async def _apply_presence_preset(self, preset_row) -> None:
+        await self.bot.change_presence(
+            status=resolve_presence_status(preset_row["status"]),
+            activity=build_presence_activity(
+                preset_row["activity_type"],
+                preset_row["activity_text"],
+                preset_row["activity_emoji"],
+            ),
+        )
+
+    @commands.group(name="presence", invoke_without_command=True)
+    @owner_only()
+    async def presence_group(self, ctx: commands.Context):
+        """Gestiona presets de presencia del bot."""
+        current = db.get_active_bot_presence_preset()
+        embed = build_presence_embed(dict(current) if current else None, title="Presence presets")
+        embed.add_field(
+            name="Comandos",
+            value=(
+                "`c!presence custom <estado> <texto>`\n"
+                "`c!presence custom <estado> <emoji> | <texto>`\n"
+                "`c!presence add <nombre> <tipo> <estado> <texto>`\n"
+                "`c!presence add <nombre> custom <estado> <emoji> | <texto>`\n"
+                "`c!presence set <nombre>`\n"
+                "`c!presence list`\n"
+                "`c!presence remove <nombre>`\n"
+                "`c!presence clear`"
+            ),
+            inline=False,
+        )
+        embed.set_footer(
+            text=(
+                "Tipos: custom, playing, listening, watching, competing | "
+                "Estados: online, idle, dnd, invisible | "
+                "Emoji visible: usa unicode, por ejemplo 🔗 | Custom emoji de servidor no lo muestra Discord en bots"
+            )
+        )
+        await ctx.reply(embed=embed, mention_author=False)
+
+    @presence_group.command(name="custom", aliases=["bubble", "status"])
+    @owner_only()
+    async def presence_custom(self, ctx: commands.Context, status: str = "online", *, text: str):
+        """Aplica al instante un custom status persistente."""
+        normalized_status = normalize_presence_status(status)
+        if normalized_status is None:
+            await ctx.reply(
+                f"Estado invalido. Usa uno de: {', '.join(PRESENCE_STATUSES)}.",
+                mention_author=False,
+            )
+            return
+        raw_activity_emoji, activity_text = split_custom_status_input(text)
+        if not activity_text:
+            await ctx.reply("Debes indicar el texto del custom status.", mention_author=False)
+            return
+        if len(activity_text) > 128:
+            await ctx.reply("El texto del estado no puede superar 128 caracteres.", mention_author=False)
+            return
+        activity_emoji = raw_activity_emoji.strip() if raw_activity_emoji else None
+        if activity_emoji and looks_like_custom_emoji_reference(activity_emoji):
+            await ctx.reply(
+                "Discord no muestra emojis custom de servidor en el custom status de bots. Usa un emoji unicode en el texto, por ejemplo `c!presence custom online 🔗 | c!help | c!copy`.",
+                mention_author=False,
+            )
+            return
+
+        preset_name = "_quick_custom"
+        db.upsert_bot_presence_preset(
+            preset_name,
+            "custom",
+            normalized_status,
+            activity_text,
+            activity_emoji,
+        )
+        db.set_active_bot_presence_preset(preset_name)
+        preset = db.get_active_bot_presence_preset()
+        await self._apply_presence_preset(preset)
+
+        embed = build_presence_embed(dict(preset), title="Custom status activado")
+        await ctx.reply(embed=embed, mention_author=False)
+
+    @presence_group.command(name="add")
+    @owner_only()
+    async def presence_add(self, ctx: commands.Context, name: str, activity_type: str, status: str, *, text: str):
+        """Crea o actualiza un preset de presencia."""
+        normalized_type = normalize_presence_activity_type(activity_type)
+        normalized_status = normalize_presence_status(status)
+        if normalized_type is None:
+            await ctx.reply(
+                f"Tipo invalido. Usa uno de: {', '.join(PRESENCE_ACTIVITY_TYPES)}.",
+                mention_author=False,
+            )
+            return
+        if normalized_status is None:
+            await ctx.reply(
+                f"Estado invalido. Usa uno de: {', '.join(PRESENCE_STATUSES)}.",
+                mention_author=False,
+            )
+            return
+        raw_activity_emoji = None
+        activity_emoji = None
+        activity_text = text
+        if normalized_type == "custom":
+            raw_activity_emoji, activity_text = split_custom_status_input(text)
+            activity_emoji = raw_activity_emoji.strip() if raw_activity_emoji else None
+            if activity_emoji and looks_like_custom_emoji_reference(activity_emoji):
+                await ctx.reply(
+                    "Discord no muestra emojis custom de servidor en el custom status de bots. Usa un emoji unicode en el texto, por ejemplo `c!presence add promo custom online 🔗 | c!help | c!copy`.",
+                    mention_author=False,
+                )
+                return
+        if not activity_text:
+            await ctx.reply("Debes indicar el texto del estado.", mention_author=False)
+            return
+        if len(activity_text) > 128:
+            await ctx.reply("El texto del estado no puede superar 128 caracteres.", mention_author=False)
+            return
+
+        current = db.get_active_bot_presence_preset()
+        db.upsert_bot_presence_preset(
+            name,
+            normalized_type,
+            normalized_status,
+            activity_text,
+            activity_emoji,
+        )
+        preset = db.get_bot_presence_preset(name)
+        if current and current["name"].lower() == preset["name"].lower():
+            await self._apply_presence_preset(preset)
+        embed = build_presence_embed(dict(preset), title="Preset guardado")
+        await ctx.reply(embed=embed, mention_author=False)
+
+    @presence_group.command(name="set", aliases=["use", "apply"])
+    @owner_only()
+    async def presence_set(self, ctx: commands.Context, *, name: str):
+        """Activa un preset guardado y lo aplica al bot."""
+        preset = db.get_bot_presence_preset(name)
+        if not preset:
+            await ctx.reply("No existe un preset con ese nombre.", mention_author=False)
+            return
+
+        db.set_active_bot_presence_preset(name)
+        preset = db.get_active_bot_presence_preset()
+        await self._apply_presence_preset(preset)
+
+        embed = build_presence_embed(dict(preset), title="Preset activado")
+        await ctx.reply(embed=embed, mention_author=False)
+
+    @presence_group.command(name="list")
+    @owner_only()
+    async def presence_list(self, ctx: commands.Context):
+        """Lista todos los presets de presencia."""
+        rows = db.list_bot_presence_presets()
+        if not rows:
+            await ctx.reply("No hay presets de presencia guardados.", mention_author=False)
+            return
+
+        embed = discord.Embed(title="Presets de presencia", color=discord.Color.blurple())
+        for row in rows[:25]:
+            active_prefix = "[ACTIVO]\n" if row["is_active"] else ""
+            embed.add_field(
+                name=row["name"],
+                value=(
+                    f"{active_prefix}"
+                    f"Tipo: `{row['activity_type']}`\n"
+                    f"Estado: `{row['status']}`\n"
+                    f"Emoji: {row['activity_emoji'] or '—'}\n"
+                    f"Texto: {row['activity_text']}"
+                ),
+                inline=False,
+            )
+
+        if len(rows) > 25:
+            embed.set_footer(text=f"Mostrando 25 de {len(rows)} presets.")
+        await ctx.reply(embed=embed, mention_author=False)
+
+    @presence_group.command(name="remove", aliases=["delete", "del"])
+    @owner_only()
+    async def presence_remove(self, ctx: commands.Context, *, name: str):
+        """Elimina un preset de presencia."""
+        removed = db.delete_bot_presence_preset(name)
+        if not removed:
+            await ctx.reply("No existe un preset con ese nombre.", mention_author=False)
+            return
+
+        current = db.get_active_bot_presence_preset()
+        if current is None:
+            await self.bot.apply_configured_presence()
+        await ctx.reply(f"Preset `{name}` eliminado.", mention_author=False)
+
+    @presence_group.command(name="clear")
+    @owner_only()
+    async def presence_clear(self, ctx: commands.Context):
+        """Elimina todos los presets de presencia."""
+        db.clear_bot_presence_presets()
+        await self.bot.apply_configured_presence()
+        await ctx.reply("Todos los presets de presencia fueron eliminados.", mention_author=False)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(OwnerCog(bot))

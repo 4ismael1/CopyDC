@@ -353,13 +353,3 @@ class BoostRolesCog(commands.Cog):
 # ─────────────── setup para load_extension ────────────────
 async def setup(bot: commands.Bot):
     await bot.add_cog(BoostRolesCog(bot))
-
-    # ① Sync global
-    await bot.tree.sync()
-
-    # ② Sync inmediato en los guilds actuales
-    for g in bot.guilds:
-        try:
-            await bot.tree.sync(guild=g)
-        except discord.HTTPException:
-            pass
