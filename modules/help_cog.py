@@ -69,7 +69,14 @@ def get_help_embeds(lang: str = "es") -> List[discord.Embed]:
             color=0x1ABC9C,
         )
         embed1.add_field(name="Disponible por texto", value="Usa `c!` o `!` para este modulo.", inline=False)
-        embed1.add_field(name="`c!copy [nombre]`", value="Clona un emoji o sticker de otro mensaje.", inline=False)
+        embed1.add_field(
+            name="`c!copy` / `!copy`",
+            value=(
+                "Responde a un mensaje que tenga un emoji o sticker para clonarlo.\n"
+                "Para copiar un emoji directamente usa `!copy <emoji>`."
+            ),
+            inline=False,
+        )
         embed1.add_field(name="`c!emoji [nombre]`", value="Convierte un adjunto en emoji.", inline=False)
         embed1.add_field(name="`c!sticker [nombre]`", value="Sube un adjunto como sticker.", inline=False)
         embed1.add_field(name="`c!get`", value="Extrae la imagen de un emoji o sticker de un mensaje.", inline=False)
@@ -255,7 +262,14 @@ def get_help_embeds(lang: str = "es") -> List[discord.Embed]:
         color=0x1ABC9C,
     )
     embed1.add_field(name="Text only", value="Use `c!` or `!` for this module.", inline=False)
-    embed1.add_field(name="`c!copy [name]`", value="Clone an emoji or sticker from another message.", inline=False)
+    embed1.add_field(
+        name="`c!copy` / `!copy`",
+        value=(
+            "Reply to a message containing an emoji or sticker to clone it.\n"
+            "To copy an emoji directly, use `!copy <emoji>`."
+        ),
+        inline=False,
+    )
     embed1.add_field(name="`c!emoji [name]`", value="Turn an attachment into an emoji.", inline=False)
     embed1.add_field(name="`c!sticker [name]`", value="Upload an attachment as a sticker.", inline=False)
     embed1.add_field(name="`c!get`", value="Extract an emoji or sticker image from a message.", inline=False)
