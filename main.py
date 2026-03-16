@@ -263,7 +263,7 @@ class MyBot(commands.Bot):
         guild_sync_count = 0
         for guild in self.guilds:
             try:
-                await self.tree.sync(guild=guild)
+                await self.sync_guild_application_commands(guild, log_result=False)
                 guild_sync_count += 1
             except discord.HTTPException as exc:
                 log.warning(f"No se pudieron sincronizar slash commands en {guild.name} ({guild.id}): {exc}")
@@ -271,12 +271,24 @@ class MyBot(commands.Bot):
         self._app_commands_synced = True
         log.info(f"Slash commands sincronizados para {guild_sync_count} servidores actuales.")
 
-    async def sync_guild_application_commands(self, guild: discord.Guild):
+    async def sync_guild_application_commands(
+        self,
+        guild: discord.Guild,
+        *,
+        log_result: bool = True,
+    ) -> list[app_commands.AppCommand]:
         try:
+            # Refleja los slash globales en scope de guild para que aparezcan al instante
+            # en servidores nuevos, sin esperar a la propagacion global.
+            self.tree.clear_commands(guild=guild)
+            self.tree.copy_global_to(guild=guild)
             synced = await self.tree.sync(guild=guild)
-            log.info(f"Slash commands sincronizados en {guild.name} ({guild.id}): {len(synced)}")
+            if log_result:
+                log.info(f"Slash commands sincronizados en {guild.name} ({guild.id}): {len(synced)}")
+            return synced
         except discord.HTTPException as exc:
             log.warning(f"No se pudieron sincronizar slash commands en {guild.name} ({guild.id}): {exc}")
+            raise
 
     async def send_guild_welcome(self, guild: discord.Guild):
         if self.user is None:

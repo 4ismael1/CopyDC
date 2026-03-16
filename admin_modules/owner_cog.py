@@ -518,15 +518,16 @@ class OwnerCog(commands.Cog):
                     mention_author=False,
                 )
                 return
-            synced = await self.bot.tree.sync(guild=ctx.guild)
+            synced = await self.bot.sync_guild_application_commands(ctx.guild)
             summary.append(f"Guild actual ({ctx.guild.name}): {len(synced)} comando(s) sincronizado(s).")
         elif normalized == "all":
             success = 0
             failed: list[str] = []
             for guild in self.bot.guilds:
                 try:
-                    await self.bot.tree.sync(guild=guild)
-                    success += 1
+                    synced = await self.bot.sync_guild_application_commands(guild)
+                    if synced is not None:
+                        success += 1
                 except discord.HTTPException:
                     failed.append(f"{guild.name} ({guild.id})")
 
