@@ -133,10 +133,25 @@ class ThreadsCog(commands.Cog):
         if should_create_thread:
             try:
                 await msg.add_reaction("💗")
+            except discord.NotFound:
+                # El mensaje fue eliminado antes de poder reaccionar.
+                return
+            except discord.HTTPException:
+                pass
+
+            try:
                 await msg.create_thread(name="comentarios (auto)", auto_archive_duration=1440)
-            except Exception as exc:
+            except discord.NotFound:
+                # Carrera normal: alguien borro el mensaje antes del thread.
+                return
+            except discord.Forbidden as exc:
+                log.warning(
+                    f"Sin permisos para crear hilo automatico en {msg.guild.name} ({msg.channel.name}): {exc}"
+                )
+            except discord.HTTPException as exc:
                 log.error(f"Error al crear hilo automatico en {msg.guild.name} ({msg.channel.name}): {exc}")
 
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ThreadsCog(bot))
+

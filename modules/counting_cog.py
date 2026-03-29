@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import database as db
-from command_utils import looks_like_command, send_response
+from command_utils import is_interaction_context, looks_like_command, send_response
 
 
 class CountingCog(commands.Cog):
@@ -73,10 +73,10 @@ class CountingCog(commands.Cog):
             ephemeral=True,
         )
 
-        if getattr(ctx, "message", None) is not None:
+        if not is_interaction_context(ctx) and getattr(ctx, "message", None) is not None:
             try:
                 await ctx.message.delete()
-            except discord.Forbidden:
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                 pass
 
     @counting.command(name="reset", description="Reinicia el conteo del canal actual")
