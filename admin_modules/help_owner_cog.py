@@ -26,6 +26,7 @@ def get_owner_help_embeds() -> List[discord.Embed]:
         name="Owner Core",
         value=(
             "`c!servers`\n"
+            "`servers configured [pagina]`\n"
             "`c!slashsync [global|guild|all]`\n"
             "`c!presence`\n"
             "`c!ohelp`"
@@ -72,6 +73,11 @@ def get_owner_help_embeds() -> List[discord.Embed]:
     owner_core.add_field(
         name="`servers info <id|nombre>`",
         value="Muestra la ficha del servidor con resumen, canales, roles, seguridad y permisos del bot.",
+        inline=False,
+    )
+    owner_core.add_field(
+        name="`servers configured [pagina]`",
+        value="Lista servidores con modulos configurados (thread, counting, react, vanity, clantag y boost).",
         inline=False,
     )
     owner_core.add_field(

@@ -140,7 +140,7 @@ class ThreadsCog(commands.Cog):
                 pass
 
             try:
-                await msg.create_thread(name="comentarios (auto)", auto_archive_duration=1440)
+                await msg.create_thread(name="comments (auto)", auto_archive_duration=1440)
             except discord.NotFound:
                 # Carrera normal: alguien borro el mensaje antes del thread.
                 return

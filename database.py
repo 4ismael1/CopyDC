@@ -187,6 +187,14 @@ def get_counting_channel(channel_id: int):
     conn.close()
     return channel_data
 
+
+def get_counting_channels_for_guild(guild_id: int) -> List[sqlite3.Row]:
+    """Obtiene todos los canales de conteo configurados en un servidor."""
+    conn = get_db_connection()
+    rows = conn.execute("SELECT * FROM counting_channels WHERE guild_id = ?", (guild_id,)).fetchall()
+    conn.close()
+    return rows
+
 def update_count(channel_id: int, new_number: int, user_id: int):
     """Actualiza el número y el último usuario en un canal de conteo."""
     conn = get_db_connection()

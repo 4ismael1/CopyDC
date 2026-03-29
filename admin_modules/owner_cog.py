@@ -489,6 +489,85 @@ class OwnerCog(commands.Cog):
         view = GuildInfoView(self.bot, g.id, OWNER_ID)
         await ctx.reply(embed=view.current_embed(), view=view, mention_author=False)
 
+    @servers_group.command(name="configured", aliases=["configs"])
+    @owner_only()
+    async def configured_cmd(self, ctx: commands.Context, page: int = 1):
+        """Lista servidores con modulos configurados (counting, threads, react, vanity, clantag, boost)."""
+        records: list[tuple[discord.Guild, list[str]]] = []
+        for guild in self.bot.guilds:
+            module_flags: list[str] = []
+
+            threads_count = len(db.get_all_thread_configs_for_guild(guild.id))
+            if threads_count:
+                module_flags.append(f"thread:{threads_count}")
+
+            counting_count = len(db.get_counting_channels_for_guild(guild.id))
+            if counting_count:
+                module_flags.append(f"counting:{counting_count}")
+
+            react_count = len(db.get_all_auto_reactions(guild.id))
+            if react_count:
+                module_flags.append(f"react:{react_count}")
+
+            vanity_codes = db.get_vanity_codes(guild.id)
+            vanity_settings = db.get_vanity_settings(guild.id) or {}
+            vanity_enabled = bool(
+                vanity_codes
+                or vanity_settings.get("channel_id")
+                or vanity_settings.get("remove_channel_id")
+                or vanity_settings.get("remove_enabled")
+            )
+            if vanity_enabled:
+                module_flags.append(f"vanity:{len(vanity_codes)}")
+
+            clantag_settings = db.get_clantag_settings(guild.id) or {}
+            clantag_enabled = bool(
+                clantag_settings.get("role_id")
+                or clantag_settings.get("channel_id")
+                or clantag_settings.get("remove_channel_id")
+                or clantag_settings.get("remove_enabled")
+            )
+            if clantag_enabled:
+                module_flags.append("clantag")
+
+            boost_roles_count = len(db.get_boost_roles_for_guild(guild.id))
+            boost_log = db.get_boost_log_channel(guild.id)
+            if boost_roles_count or boost_log:
+                module_flags.append(f"boostrole:{boost_roles_count}")
+
+            if module_flags:
+                records.append((guild, module_flags))
+
+        if not records:
+            await ctx.reply("No hay servidores con modulos configurados.", mention_author=False)
+            return
+
+        records.sort(key=lambda item: (-len(item[1]), item[0].name.lower()))
+
+        per_page = 15
+        total_pages = max(1, math.ceil(len(records) / per_page))
+        page = min(max(page, 1), total_pages)
+        start = (page - 1) * per_page
+        chunk = records[start : start + per_page]
+
+        embed = discord.Embed(
+            title="Servidores con configuracion activa",
+            description="Resumen de modulos con datos guardados por servidor.",
+            color=discord.Color.blurple(),
+        )
+
+        lines: list[str] = []
+        for offset, (guild, flags) in enumerate(chunk, start=1):
+            index = start + offset
+            lines.append(
+                f"`{index}.` **{discord.utils.escape_markdown(guild.name)}** (`{guild.id}`)\n"
+                f"Modulos: {', '.join(flags)}"
+            )
+
+        embed.description = "\n\n".join(lines)
+        embed.set_footer(text=f"Pagina {page}/{total_pages} | Total con config: {len(records)}")
+        await ctx.reply(embed=embed, mention_author=False)
+
     @commands.command(name="slashsync", aliases=["syncslash", "appsync"])
     @owner_only()
     async def slashsync_cmd(self, ctx: commands.Context, scope: str = "global"):
