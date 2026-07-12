@@ -7,11 +7,33 @@ import random
 import aiohttp
 import discord
 from discord.ext import commands
-from PIL import Image
+from PIL import Image, ImageOps
 
 # ────────────── UTILIDADES ──────────────
 TAG_REGEX = re.compile(r'<a?:\w+:\d+>')
 PARSE_REGEX = re.compile(r'<(a?):(\w+):(\d+)>')
+EMOJI_MAX_BYTES = 256 * 1024
+STICKER_MAX_BYTES = 512 * 1024
+EMOJI_MAX_SIDE = 128
+STICKER_MAX_SIDE = 320
+ANIMATED_FORMATS = {"GIF", "APNG"}
+IMAGE_ATTACHMENT_FORMATS = (".png", ".apng", ".gif", ".jpg", ".jpeg", ".webp")
+STICKER_COPY_HELP = (
+    "Ese ya es un sticker. El comando correcto es `!copy` respondiendo al sticker."
+)
+IMAGE_COPY_HELP = (
+    "Eso es una imagen. Usa `!sticker` para sticker o `!emoji` para emoji."
+)
+STICKER_USAGE_HELP = (
+    "Responde a una imagen con `!sticker` para subirla como sticker."
+)
+EMOJI_COPY_HELP = (
+    "Ese ya es un emoji. El comando correcto es `!copy` respondiendo al mensaje."
+)
+EMOJI_USAGE_HELP = (
+    "Responde a una imagen con `!emoji` para subirla como emoji."
+)
+NO_EXPRESSION_HELP = "No detecte imagen, sticker ni emoji en ese mensaje."
 
 def parse_custom_emoji(tag: str):
     m = PARSE_REGEX.fullmatch(tag)
@@ -34,6 +56,107 @@ async def fetch_bytes(url: str):
 def has_expr_perm(member: discord.Member):
     p = member.guild_permissions
     return p.administrator or getattr(p, "manage_expressions", False)
+
+def get_image_attachment(message: discord.Message):
+    for attachment in message.attachments:
+        content_type = (attachment.content_type or "").lower()
+        filename = attachment.filename.lower()
+        if content_type.startswith("image/") or filename.endswith(IMAGE_ATTACHMENT_FORMATS):
+            return attachment
+    return None
+
+def _resample_filter():
+    return getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+
+def _save_png_bytes(img: Image.Image) -> bytes:
+    with io.BytesIO() as buffer:
+        img.save(buffer, format="PNG", optimize=True, compress_level=9)
+        return buffer.getvalue()
+
+def _prepare_static_image(img: Image.Image, max_side: int, *, square_canvas: bool) -> Image.Image:
+    img = ImageOps.exif_transpose(img)
+    has_alpha = img.mode in ("RGBA", "LA") or "transparency" in img.info
+    img = img.convert("RGBA" if has_alpha or square_canvas else "RGB")
+    img.thumbnail((max_side, max_side), _resample_filter())
+
+    if not square_canvas:
+        return img
+
+    canvas = Image.new("RGBA", (max_side, max_side), (0, 0, 0, 0))
+    x = (max_side - img.width) // 2
+    y = (max_side - img.height) // 2
+    canvas.alpha_composite(img.convert("RGBA"), (x, y))
+    return canvas
+
+def compress_static_image_for_discord(
+    data: bytes,
+    *,
+    max_bytes: int,
+    max_side: int,
+    square_canvas: bool = False,
+) -> tuple[bytes, str, bool]:
+    if len(data) <= max_bytes:
+        try:
+            with Image.open(io.BytesIO(data)) as probe:
+                if getattr(probe, "is_animated", False) or getattr(probe, "n_frames", 1) > 1:
+                    return data, ".gif" if probe.format == "GIF" else ".png", False
+        except Exception:
+            return data, ".png", False
+
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            if img.format in ANIMATED_FORMATS or getattr(img, "is_animated", False) or getattr(img, "n_frames", 1) > 1:
+                if len(data) <= max_bytes:
+                    return data, ".gif" if img.format == "GIF" else ".png", False
+                raise ValueError("La imagen animada supera el limite y no puedo optimizar animaciones todavia.")
+
+            prepared = _prepare_static_image(img, max_side, square_canvas=square_canvas)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"No pude procesar la imagen: {exc}") from exc
+
+    png_data = _save_png_bytes(prepared)
+    if len(png_data) <= max_bytes:
+        return png_data, ".png", True
+
+    raise ValueError(
+        "La imagen sigue pesando demasiado incluso despues de optimizarla. "
+        "Para evitar perder calidad visible, no la reduje mas."
+    )
+
+def describe_expression_upload_error(exc: discord.HTTPException, kind: str) -> str:
+    raw_text = str(getattr(exc, "text", "") or exc)
+    lowered = raw_text.lower()
+    code = getattr(exc, "code", None)
+
+    if kind == "sticker" and (
+        code == 30039
+        or "maximum number of stickers" in lowered
+        or ("sticker" in lowered and "maximum" in lowered)
+    ):
+        return (
+            "No pude agregar el sticker porque este servidor ya alcanzo su limite de stickers. "
+            "Borra un sticker existente o aumenta el nivel del servidor antes de intentarlo otra vez."
+        )
+
+    if kind == "emoji" and (
+        code == 30008
+        or "maximum number of emojis" in lowered
+        or ("emoji" in lowered and "maximum" in lowered)
+    ):
+        return (
+            "No pude agregar el emoji porque este servidor ya alcanzo su limite de emojis. "
+            "Borra un emoji existente o aumenta el nivel del servidor antes de intentarlo otra vez."
+        )
+
+    if getattr(exc, "status", None) == 400:
+        return (
+            f"Discord rechazo el {kind}. Puede que el archivo siga superando el limite, "
+            "tenga un formato no aceptado o el servidor haya alcanzado su limite."
+        )
+
+    return f"No se pudo subir el {kind}: {exc}"
 
 # ────────────── COG DE EXPRESIONES ──────────────
 class ExpressionCog(commands.Cog):
@@ -65,8 +188,24 @@ class ExpressionCog(commands.Cog):
 
                 name = sanitize(custom_name or st.name, max_len=30, prefix="stk")
                 try:
-                    sticker = await ctx.guild.create_sticker(name=name, description="Agregado por bot", emoji="🙂", file=discord.File(io.BytesIO(data), filename="sticker.png"))
-                    await ref.reply(f'Sticker `{sticker.name}` agregado al servidor ✅', mention_author=False)
+                    data, extension, compressed = compress_static_image_for_discord(
+                        data,
+                        max_bytes=STICKER_MAX_BYTES,
+                        max_side=STICKER_MAX_SIDE,
+                        square_canvas=True,
+                    )
+                    sticker = await ctx.guild.create_sticker(
+                        name=name,
+                        description="Agregado por bot",
+                        emoji="🙂",
+                        file=discord.File(io.BytesIO(data), filename=f"sticker{extension}"),
+                    )
+                    note = " 🛠️" if compressed else ""
+                    await ref.reply(f'Sticker `{sticker.name}` agregado al servidor ✅{note}', mention_author=False)
+                except ValueError as e:
+                    await ctx.reply(str(e), mention_author=False)
+                except discord.HTTPException as e:
+                    await ctx.reply(describe_expression_upload_error(e, "sticker"), mention_author=False)
                 except Exception as e:
                     await ctx.reply(f"Error: {e}", mention_author=False)
                 return
@@ -86,10 +225,16 @@ class ExpressionCog(commands.Cog):
                 try:
                     emoji = await ctx.guild.create_custom_emoji(name=name, image=data)
                     await ref.reply(f'Emoji {emoji} (`{name}`) agregado al servidor ✅', mention_author=False)
+                except discord.HTTPException as e:
+                    await ctx.reply(describe_expression_upload_error(e, "emoji"), mention_author=False)
                 except Exception as e:
                     await ctx.reply(f"Error: {e}", mention_author=False)
                 return
             
+            if get_image_attachment(ref):
+                await ctx.reply(IMAGE_COPY_HELP, mention_author=False)
+                return
+
             await ctx.reply("No encontré sticker ni emoji en ese mensaje.", mention_author=False)
             return
 
@@ -113,10 +258,12 @@ class ExpressionCog(commands.Cog):
         try:
             emoji = await ctx.guild.create_custom_emoji(name=name, image=data)
             await ctx.reply(f'Emoji {emoji} (`{name}`) agregado al servidor ✅', mention_author=False)
+        except discord.HTTPException as e:
+            await ctx.reply(describe_expression_upload_error(e, "emoji"), mention_author=False)
         except Exception as e:
             await ctx.reply(f"Error: {e}", mention_author=False)
 
-    @commands.command()
+    @commands.command(aliases=["emojis"])
     @commands.guild_only()
     async def emoji(self, ctx: commands.Context, *, nombre: str | None = None):
         """Sube un archivo adjunto (PNG, GIF, JPG) como un emoji."""
@@ -125,17 +272,25 @@ class ExpressionCog(commands.Cog):
             return
 
         if not ctx.message.reference:
-            await ctx.reply("Responde al archivo que quieres subir como emoji.", mention_author=False)
+            await ctx.reply(EMOJI_USAGE_HELP, mention_author=False)
             return
 
         ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+        if ref.stickers:
+            await ctx.reply(STICKER_COPY_HELP, mention_author=False)
+            return
+        if TAG_REGEX.search(ref.content):
+            await ctx.reply(EMOJI_COPY_HELP, mention_author=False)
+            return
+
         if not ref.attachments:
-            await ctx.reply("Ese mensaje no tiene ningún archivo adjunto.", mention_author=False)
+            await ctx.reply(NO_EXPRESSION_HELP, mention_author=False)
             return
 
         att = ref.attachments[0]
-        if att.size > 262144: # 256 KiB
-            await ctx.reply("El archivo pesa más de 256 KB. Discord no lo aceptará.", mention_author=False)
+        allowed_formats = (".png", ".apng", ".gif", ".jpg", ".jpeg", ".webp")
+        if not att.filename.lower().endswith(allowed_formats):
+            await ctx.reply(f"Formato no soportado. Usa {', '.join(allowed_formats)}.", mention_author=False)
             return
 
         data = await att.read()
@@ -143,12 +298,22 @@ class ExpressionCog(commands.Cog):
         new_name = sanitize(nombre or base_name)
 
         try:
+            data, extension, compressed = compress_static_image_for_discord(
+                data,
+                max_bytes=EMOJI_MAX_BYTES,
+                max_side=EMOJI_MAX_SIDE,
+            )
             new_emoji = await ctx.guild.create_custom_emoji(name=new_name, image=data)
-            await ref.reply(f'Emoji {new_emoji} (`{new_name}`) agregado al servidor ✅', mention_author=False)
+            note = " 🛠️" if compressed else ""
+            await ref.reply(f'Emoji {new_emoji} (`{new_name}`) agregado al servidor ✅{note}', mention_author=False)
+        except ValueError as e:
+            await ctx.reply(str(e), mention_author=False)
+        except discord.HTTPException as e:
+            await ctx.reply(describe_expression_upload_error(e, "emoji"), mention_author=False)
         except Exception as e:
             await ctx.reply(f"No se pudo subir el emoji: {e}", mention_author=False)
 
-    @commands.command()
+    @commands.command(aliases=["stickers", "stk"])
     @commands.guild_only()
     async def sticker(self, ctx: commands.Context, *, nombre: str | None = None):
         """Sube un archivo adjunto como sticker (convierte JPG a PNG si es necesario)."""
@@ -157,50 +322,50 @@ class ExpressionCog(commands.Cog):
             return
 
         if not ctx.message.reference:
-            await ctx.reply("Responde al archivo que quieres subir como sticker.", mention_author=False)
+            await ctx.reply(STICKER_USAGE_HELP, mention_author=False)
             return
 
         ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+        if ref.stickers:
+            await ctx.reply(STICKER_COPY_HELP, mention_author=False)
+            return
+        if TAG_REGEX.search(ref.content):
+            await ctx.reply(EMOJI_COPY_HELP, mention_author=False)
+            return
+
         if not ref.attachments:
-            await ctx.reply("Ese mensaje no tiene ningún archivo adjunto.", mention_author=False)
+            await ctx.reply(NO_EXPRESSION_HELP, mention_author=False)
             return
 
         att = ref.attachments[0]
-        if att.size > 524288: # 512 KiB
-            await ctx.reply("El archivo pesa más de 512 KiB. Discord no lo aceptará.", mention_author=False)
-            return
-
-        allowed_formats = (".png", ".apng", ".gif", ".jpg", ".jpeg")
+        allowed_formats = (".png", ".apng", ".gif", ".jpg", ".jpeg", ".webp")
         if not att.filename.lower().endswith(allowed_formats):
             await ctx.reply(f"Formato no soportado. Usa {', '.join(allowed_formats)}.", mention_author=False)
             return
 
         data = await att.read()
-        final_filename = att.filename
-
-        if att.filename.lower().endswith((".jpg", ".jpeg")):
-            try:
-                with Image.open(io.BytesIO(data)) as img:
-                    with io.BytesIO() as buffer:
-                        img.save(buffer, format="PNG")
-                        buffer.seek(0)
-                        data = buffer.read()
-                final_filename = os.path.splitext(att.filename)[0] + ".png"
-            except Exception as e:
-                await ctx.reply(f"No pude convertir la imagen JPG a PNG: {e}", mention_author=False)
-                return
-
         base_name = os.path.splitext(att.filename)[0]
         new_name = sanitize(nombre or base_name, max_len=30, prefix="stk")
 
         try:
+            data, extension, compressed = compress_static_image_for_discord(
+                data,
+                max_bytes=STICKER_MAX_BYTES,
+                max_side=STICKER_MAX_SIDE,
+                square_canvas=True,
+            )
             new_sticker = await ctx.guild.create_sticker(
                 name=new_name,
                 description="Agregado por bot",
                 emoji="🙂",
-                file=discord.File(io.BytesIO(data), filename=final_filename)
+                file=discord.File(io.BytesIO(data), filename=f"{new_name}{extension}")
             )
-            await ref.reply(f'Sticker `{new_sticker.name}` agregado al servidor ✅', mention_author=False)
+            note = " 🛠️" if compressed else ""
+            await ref.reply(f'Sticker `{new_sticker.name}` agregado al servidor ✅{note}', mention_author=False)
+        except ValueError as e:
+            await ctx.reply(str(e), mention_author=False)
+        except discord.HTTPException as e:
+            await ctx.reply(describe_expression_upload_error(e, "sticker"), mention_author=False)
         except Exception as e:
             await ctx.reply(f"No se pudo subir el sticker: {e}", mention_author=False)
             

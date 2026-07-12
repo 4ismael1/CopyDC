@@ -41,18 +41,52 @@ class ClanTagSlashCog(commands.Cog):
         cog = self.bot.get_cog("ClanTagCog")
         return cog if isinstance(cog, ClanTagCog) else None
 
+    @staticmethod
+    async def _is_admin_or_owner(interaction: discord.Interaction) -> bool:
+        if interaction.guild is None:
+            return False
+        if interaction.user.id == interaction.guild.owner_id:
+            return True
+
+        resolved_permissions = getattr(interaction, "permissions", None)
+        if resolved_permissions and resolved_permissions.administrator:
+            return True
+
+        permissions = getattr(interaction.user, "guild_permissions", None)
+        if permissions and permissions.administrator:
+            return True
+
+        member = interaction.guild.get_member(interaction.user.id)
+        if member is not None and member.guild_permissions.administrator:
+            return True
+
+        try:
+            member = await interaction.guild.fetch_member(interaction.user.id)
+        except discord.HTTPException:
+            member = None
+
+        return bool(member and member.guild_permissions.administrator)
+
     async def _send(self, interaction: discord.Interaction, content: str | None = None, *, embed: discord.Embed | None = None, view: discord.ui.View | None = None, ephemeral: bool = True):
+        kwargs = {"ephemeral": ephemeral}
+        if content is not None:
+            kwargs["content"] = content
+        if embed is not None:
+            kwargs["embed"] = embed
+        if view is not None:
+            kwargs["view"] = view
+
         if interaction.response.is_done():
-            await interaction.followup.send(content=content, embed=embed, view=view, ephemeral=ephemeral)
+            await interaction.followup.send(**kwargs)
         else:
-            await interaction.response.send_message(content=content, embed=embed, view=view, ephemeral=ephemeral)
+            await interaction.response.send_message(**kwargs)
 
     async def _ensure_ready(self, interaction: discord.Interaction) -> ClanTagCog | None:
         if interaction.guild is None:
             await self._send(interaction, "Este comando solo funciona dentro de un servidor.")
             return None
 
-        if not interaction.user.guild_permissions.administrator:
+        if not await self._is_admin_or_owner(interaction):
             await self._send(interaction, "Necesitas **Administrador** para usar este comando.")
             return None
 
