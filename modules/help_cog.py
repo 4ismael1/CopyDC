@@ -36,7 +36,7 @@ def get_help_embeds(lang: str = "es") -> list[discord.Embed]:
             value=(
                 "Prefijos de texto: `c!` y `!`\n"
                 "Slash disponibles: `/help`, `/thread`, `/counting`, `/react`, `/vanity`, "
-                "`/clantag`, `/boostrole`, `/case`, `/lfg`"
+                "`/clantag`, `/boostrole`, `/case`, `/lfg`, `/language`"
             ),
             inline=False,
         )
@@ -50,7 +50,17 @@ def get_help_embeds(lang: str = "es") -> list[discord.Embed]:
                 "`thread` - Hilos automaticos\n"
                 "`counting` - Canal de conteo\n"
                 "`case` - Casos privados y expedientes de soporte\n"
-                "`lfg` - Grupos por actividad de juego en vivo"
+                "`lfg` - Grupos por actividad de juego en vivo\n"
+                "`language` - Idioma global de Copy en el servidor"
+            ),
+            inline=False,
+        )
+        embed0.add_field(
+            name="Idioma del bot",
+            value=(
+                "`/language`, `c!language` o `!language`\n"
+                "Permite elegir **Automático**, **Español** o **English** para todo el servidor.\n"
+                "Requiere el permiso **Gestionar servidor**."
             ),
             inline=False,
         )
@@ -314,7 +324,7 @@ def get_help_embeds(lang: str = "es") -> list[discord.Embed]:
         value=(
             "Text prefixes: `c!` and `!`\n"
             "Available slash commands: `/help`, `/thread`, `/counting`, `/react`, `/vanity`, "
-            "`/clantag`, `/boostrole`, `/case`, `/lfg`"
+            "`/clantag`, `/boostrole`, `/case`, `/lfg`, `/language`"
         ),
         inline=False,
     )
@@ -328,7 +338,17 @@ def get_help_embeds(lang: str = "es") -> list[discord.Embed]:
             "`thread` - Automatic threads\n"
             "`counting` - Counting channel\n"
             "`case` - Private support cases and transcripts\n"
-            "`lfg` - Live game activity matchmaking"
+            "`lfg` - Live game activity matchmaking\n"
+            "`language` - Copy's server-wide language"
+        ),
+        inline=False,
+    )
+    embed0.add_field(
+        name="Bot language",
+        value=(
+            "`/language`, `c!language`, or `!language`\n"
+            "Choose **Automatic**, **Spanish**, or **English** for the entire server.\n"
+            "Requires the **Manage Server** permission."
         ),
         inline=False,
     )
