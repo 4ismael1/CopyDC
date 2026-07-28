@@ -24,6 +24,7 @@
 
 ### Mejorado
 
+- Prueba de actualización automática de despliegue: 2026-07-28.
 - Añadidos límites de descarga, tiempo y tamaño de imagen al módulo de
   expresiones.
 - Añadidos índices, validación de columnas y claves foráneas en SQLite.
