@@ -98,6 +98,14 @@ def setup_database():
         high_score INTEGER DEFAULT 0
     )
     """)
+    if not _column_exists(cursor, "counting_channels", "high_score"):
+        cursor.execute("ALTER TABLE counting_channels ADD COLUMN high_score INTEGER DEFAULT 0")
+        cursor.execute(
+            """
+            UPDATE counting_channels
+            SET high_score = COALESCE(current_number, 0)
+            """
+        )
 
     # Tabla para reacciones automáticas
     cursor.execute("""

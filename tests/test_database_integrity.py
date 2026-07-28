@@ -38,6 +38,39 @@ class DatabaseIntegrityTests(unittest.TestCase):
         db.remove_counting_channel(100)
         self.assertIsNone(db.get_counting_channel(100))
 
+    def test_legacy_counting_table_adds_high_score_without_losing_progress(self):
+        conn = db.get_db_connection()
+        try:
+            conn.execute("DROP TABLE counting_channels")
+            conn.execute(
+                """
+                CREATE TABLE counting_channels (
+                    channel_id INTEGER PRIMARY KEY,
+                    guild_id INTEGER NOT NULL,
+                    current_number INTEGER DEFAULT 0,
+                    last_user_id INTEGER DEFAULT 0
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO counting_channels
+                    (channel_id, guild_id, current_number, last_user_id)
+                VALUES (?, ?, ?, ?)
+                """,
+                (100, 10, 19, 42),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        db.setup_database()
+
+        row = db.get_counting_channel(100)
+        self.assertEqual(row["current_number"], 19)
+        self.assertEqual(row["last_user_id"], 42)
+        self.assertEqual(row["high_score"], 19)
+
     def test_remove_guild_clears_all_owned_configuration(self):
         guild = SimpleNamespace(id=10, name="Test Guild")
         db.add_guild(guild)
