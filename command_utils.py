@@ -6,6 +6,8 @@ from typing import Any
 import discord
 from discord.ext import commands
 
+from localization import translate
+
 
 class RestrictedView(discord.ui.View):
     """View que solo puede usar quien inició la operación.
@@ -28,7 +30,7 @@ class RestrictedView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "Solo la persona que inició esta operación puede usar estos controles.",
+                translate(interaction, "restricted.denied"),
                 ephemeral=True,
             )
             return False
@@ -42,7 +44,7 @@ class RestrictedView(discord.ui.View):
             ]
             if missing:
                 await interaction.response.send_message(
-                    "Ya no tienes los permisos necesarios para completar esta operación.",
+                    translate(interaction, "restricted.permissions_changed"),
                     ephemeral=True,
                 )
                 return False

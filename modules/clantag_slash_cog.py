@@ -6,17 +6,20 @@ from discord.ext import commands
 
 from command_utils import RestrictedView
 from database import delete_clantag_settings, set_clantag_settings
+from localization import get_language, translate, translate_language
 from modules.clantag_cog import ClanTagCog
 
 
 class ConfirmResetView(RestrictedView):
-    def __init__(self, author_id: int):
+    def __init__(self, author_id: int, language: str):
         super().__init__(
             author_id=author_id,
             timeout=30,
             required_permissions=("administrator",),
         )
         self.confirmed = False
+        self.confirm.label = translate_language(language, "clantag.reset_confirm")
+        self.cancel.label = translate_language(language, "common.cancel")
 
     @discord.ui.button(label="Eliminar todo", style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, _: discord.ui.Button):
@@ -93,16 +96,16 @@ class ClanTagSlashCog(commands.Cog):
 
     async def _ensure_ready(self, interaction: discord.Interaction) -> ClanTagCog | None:
         if interaction.guild is None:
-            await self._send(interaction, "Este comando solo funciona dentro de un servidor.")
+            await self._send(interaction, translate(interaction, "common.server_only"))
             return None
 
         if not await self._is_admin_or_owner(interaction):
-            await self._send(interaction, "Necesitas **Administrador** para usar este comando.")
+            await self._send(interaction, translate(interaction, "common.admin_required"))
             return None
 
         cog = self._get_clantag_cog()
         if cog is None:
-            await self._send(interaction, "El modulo de clantag no esta cargado ahora mismo.")
+            await self._send(interaction, translate(interaction, "clantag.module_unavailable"))
             return None
 
         return cog
@@ -116,7 +119,7 @@ class ClanTagSlashCog(commands.Cog):
         settings = cog._get_settings_cached(interaction.guild.id)
         clan_tag = await cog.get_guild_clan_tag(interaction.guild)
 
-        embed = discord.Embed(title="Sistema de Clan Tag", color=0x5865F2)
+        embed = discord.Embed(title=translate(interaction, "clantag.panel_title"), color=0x5865F2)
         role = interaction.guild.get_role(settings.get("role_id")) if settings.get("role_id") else None
         channel = (
             interaction.guild.get_channel(settings.get("channel_id")) if settings.get("channel_id") else None
@@ -127,26 +130,35 @@ class ClanTagSlashCog(commands.Cog):
             else None
         )
         remove_enabled = settings.get("remove_enabled", 0)
-        remove_status = remove_channel.mention if remove_channel else "`No configurado`"
+        remove_status = (
+            remove_channel.mention if remove_channel else translate(interaction, "common.not_configured_code")
+        )
         if not remove_enabled:
-            remove_status = f"~~{remove_status}~~ (desactivado)"
+            remove_status = f"~~{remove_status}~~ ({translate(interaction, 'common.disabled')})"
 
         embed.add_field(
-            name="Tag del servidor", value=f"`{clan_tag}`" if clan_tag else "Sin detectar", inline=True
+            name=translate(interaction, "clantag.server_tag_field"),
+            value=f"`{clan_tag}`" if clan_tag else translate(interaction, "clantag.no_detected"),
+            inline=True,
         )
-        embed.add_field(name="Rol", value=role.mention if role else "`No configurado`", inline=True)
         embed.add_field(
-            name="Canal (anadir)", value=channel.mention if channel else "`No configurado`", inline=True
+            name=translate(interaction, "clantag.role_field"),
+            value=role.mention if role else translate(interaction, "common.not_configured_code"),
+            inline=True,
         )
-        embed.add_field(name="Canal (removido)", value=remove_status, inline=True)
         embed.add_field(
-            name="Comandos",
-            value=(
-                "`/clantag role`  `/clantag channel`\n"
-                "`/clantag removechannel`  `/clantag removenotify`\n"
-                "`/clantag list`  `/clantag reset`\n"
-                "Editor avanzado: `c!clantag embed` o `!clantag embed`"
-            ),
+            name=translate(interaction, "clantag.channel_add_field"),
+            value=channel.mention if channel else translate(interaction, "common.not_configured_code"),
+            inline=True,
+        )
+        embed.add_field(
+            name=translate(interaction, "clantag.channel_remove_field"),
+            value=remove_status,
+            inline=True,
+        )
+        embed.add_field(
+            name=translate(interaction, "common.commands"),
+            value=translate(interaction, "clantag.commands_value"),
             inline=False,
         )
         await self._send(interaction, embed=embed)
@@ -162,15 +174,19 @@ class ClanTagSlashCog(commands.Cog):
         if rol.is_default() or rol.managed or (me is not None and rol >= me.top_role):
             await self._send(
                 interaction,
-                "No puedo administrar ese rol. Usa un rol normal situado debajo del rol del bot.",
+                translate(interaction, "common.role_unmanageable"),
             )
             return
 
         set_clantag_settings(interaction.guild.id, role_id=rol.id)
         cog._refresh_settings_cache(interaction.guild.id)
         embed = discord.Embed(
-            title="Rol configurado",
-            description=f"Los usuarios con el clan tag del servidor recibiran {rol.mention}",
+            title=translate(interaction, "clantag.role_configured_title"),
+            description=translate(
+                interaction,
+                "clantag.role_configured_description",
+                role=rol.mention,
+            ),
             color=0x57F287,
         )
         await self._send(interaction, embed=embed, ephemeral=False)
@@ -187,9 +203,9 @@ class ClanTagSlashCog(commands.Cog):
         set_clantag_settings(interaction.guild.id, channel_id=canal.id if canal else None)
         cog._refresh_settings_cache(interaction.guild.id)
         message = (
-            f"Canal de notificaciones (anadir) configurado: {canal.mention}"
+            translate(interaction, "common.channel_add_set", channel=canal.mention)
             if canal
-            else "Canal de notificaciones (anadir) desactivado."
+            else translate(interaction, "common.channel_add_disabled")
         )
         await self._send(interaction, message, ephemeral=False)
 
@@ -205,9 +221,9 @@ class ClanTagSlashCog(commands.Cog):
         set_clantag_settings(interaction.guild.id, remove_channel_id=canal.id if canal else None)
         cog._refresh_settings_cache(interaction.guild.id)
         message = (
-            f"Canal de notificaciones (removido) configurado: {canal.mention}"
+            translate(interaction, "common.channel_remove_set", channel=canal.mention)
             if canal
-            else "Canal de notificaciones (removido) desactivado."
+            else translate(interaction, "common.channel_remove_disabled")
         )
         await self._send(interaction, message, ephemeral=False)
 
@@ -222,9 +238,9 @@ class ClanTagSlashCog(commands.Cog):
         set_clantag_settings(interaction.guild.id, remove_enabled=new_value)
         cog._refresh_settings_cache(interaction.guild.id)
         message = (
-            "Notificaciones de removido activadas."
+            translate(interaction, "common.remove_notifications_enabled")
             if new_value
-            else "Notificaciones de removido desactivadas."
+            else translate(interaction, "common.remove_notifications_disabled")
         )
         await self._send(interaction, message, ephemeral=False)
 
@@ -248,20 +264,27 @@ class ClanTagSlashCog(commands.Cog):
                     clan_tag = tag
         if not users_with_tag:
             embed = discord.Embed(
-                title="Usuarios con el Clan Tag",
-                description="No hay usuarios con el clan tag de este servidor.",
+                title=translate(interaction, "clantag.list_title"),
+                description=translate(interaction, "clantag.list_none"),
                 color=0xFEE75C,
             )
             await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
-        embed = discord.Embed(title=f"Usuarios con tag `{clan_tag}`", color=0x5865F2)
+        embed = discord.Embed(
+            title=translate(interaction, "clantag.list_title_tag", tag=clan_tag),
+            color=0x5865F2,
+        )
         listed = users_with_tag[:20]
         description = "\n".join(f"- {member.mention}" for member in listed)
         if len(users_with_tag) > 20:
-            description += f"\n... y {len(users_with_tag) - 20} mas"
+            description += "\n" + translate(
+                interaction,
+                "clantag.list_more",
+                count=len(users_with_tag) - 20,
+            )
         embed.description = description
-        embed.set_footer(text=f"Total: {len(users_with_tag)} usuarios")
+        embed.set_footer(text=translate(interaction, "common.total_users", count=len(users_with_tag)))
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @clantag.command(name="reset", description="Borra toda la configuracion de clan tag")
@@ -270,22 +293,28 @@ class ClanTagSlashCog(commands.Cog):
         if cog is None:
             return
 
-        view = ConfirmResetView(interaction.user.id)
+        view = ConfirmResetView(interaction.user.id, get_language(interaction))
         embed = discord.Embed(
-            title="Estas seguro?",
-            description="Esto eliminara toda la configuracion de clan tag.",
+            title=translate(interaction, "clantag.reset_title"),
+            description=translate(interaction, "clantag.reset_description"),
             color=0xFEE75C,
         )
         await self._send(interaction, embed=embed, view=view)
         await view.wait()
 
         if not view.confirmed:
-            await interaction.followup.send("Operacion cancelada.", ephemeral=True)
+            await interaction.followup.send(
+                translate(interaction, "common.cancelled"),
+                ephemeral=True,
+            )
             return
 
         delete_clantag_settings(interaction.guild.id)
         cog._invalidate_settings_cache(interaction.guild.id)
-        await interaction.followup.send("Toda la configuracion de clan tag ha sido borrada.", ephemeral=True)
+        await interaction.followup.send(
+            translate(interaction, "clantag.reset_done"),
+            ephemeral=True,
+        )
 
 
 async def setup(bot: commands.Bot):

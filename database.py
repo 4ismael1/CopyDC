@@ -79,6 +79,14 @@ def setup_database():
     )
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS guild_languages (
+        guild_id INTEGER PRIMARY KEY,
+        language_mode TEXT NOT NULL DEFAULT 'auto'
+            CHECK(language_mode IN ('auto', 'en', 'es'))
+    )
+    """)
+
     # Tabla para la configuración de hilos automáticos
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS thread_configs (
@@ -275,6 +283,7 @@ def remove_guild(guild: dict):
         "lfg_enrollments",
         "lfg_games",
         "lfg_settings",
+        "guild_languages",
     ):
         conn.execute(f"DELETE FROM {table_name} WHERE guild_id = ?", (guild_id,))
     conn.execute("DELETE FROM guilds WHERE guild_id = ?", (guild_id,))
@@ -288,6 +297,40 @@ def get_all_guilds() -> list[sqlite3.Row]:
     guilds = conn.execute("SELECT * FROM guilds").fetchall()
     conn.close()
     return guilds
+
+
+def get_all_guild_languages() -> list[sqlite3.Row]:
+    conn = get_db_connection()
+    rows = conn.execute("SELECT guild_id, language_mode FROM guild_languages").fetchall()
+    conn.close()
+    return rows
+
+
+def get_guild_language(guild_id: int) -> str:
+    conn = get_db_connection()
+    row = conn.execute(
+        "SELECT language_mode FROM guild_languages WHERE guild_id = ?",
+        (guild_id,),
+    ).fetchone()
+    conn.close()
+    return row["language_mode"] if row else "auto"
+
+
+def set_guild_language(guild_id: int, language_mode: str) -> None:
+    if language_mode not in {"auto", "en", "es"}:
+        raise ValueError(f"Unsupported language mode: {language_mode}")
+
+    conn = get_db_connection()
+    conn.execute(
+        """
+        INSERT INTO guild_languages (guild_id, language_mode)
+        VALUES (?, ?)
+        ON CONFLICT(guild_id) DO UPDATE SET language_mode = excluded.language_mode
+        """,
+        (guild_id, language_mode),
+    )
+    conn.commit()
+    conn.close()
 
 
 # --- Funciones para Threads ---

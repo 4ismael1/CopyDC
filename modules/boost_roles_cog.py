@@ -18,6 +18,7 @@ from discord.ext import commands, tasks
 
 import database as db
 from command_utils import RestrictedView
+from localization import translate
 
 ENTRIES_PER_PAGE = 10  # roles por página en /boostrole list
 log = logging.getLogger("bot")
@@ -95,8 +96,8 @@ class BoostRolesCog(commands.Cog):
         if not interaction.user.guild_permissions.manage_roles:
             return await self._send_error(
                 interaction,
-                "⛔ Permiso insuficiente",
-                "Necesitas **Gestionar roles** para usar este comando.",
+                translate(interaction, "common.error"),
+                translate(interaction, "boost.permission_manage_roles"),
             )
 
         # Chequeo de jerarquía
@@ -104,20 +105,22 @@ class BoostRolesCog(commands.Cog):
         if me is None:
             return await self._send_error(
                 interaction,
-                "⛔ Estado incompleto",
-                "No pude resolver mi miembro dentro del servidor. Intenta nuevamente.",
+                translate(interaction, "boost.state_incomplete_title"),
+                translate(interaction, "boost.state_incomplete"),
             )
 
         if role.is_default() or role.managed or role >= me.top_role:
             return await self._send_error(
-                interaction, "⛔ Rol demasiado alto", "Ese rol está por encima de mi rol; no puedo asignarlo."
+                interaction,
+                translate(interaction, "boost.role_high_title"),
+                translate(interaction, "boost.role_high_description"),
             )
 
         if interaction.user.id != interaction.guild.owner_id and role >= interaction.user.top_role:
             return await self._send_error(
                 interaction,
-                "⛔ Rol demasiado alto",
-                "No puedes administrar un rol igual o superior a tu rol más alto.",
+                translate(interaction, "boost.role_high_title"),
+                translate(interaction, "boost.role_high_self"),
             )
 
         existing = db.get_boost_role(interaction.guild.id, role.id)
@@ -127,16 +130,24 @@ class BoostRolesCog(commands.Cog):
         # Usuario debe ser booster si se liga
         if linked_to_boost and user.premium_since is None:
             return await self._send_error(
-                interaction, "⚠️ Usuario no es booster", f"{user.mention} no está boosteando el servidor."
+                interaction,
+                translate(interaction, "boost.user_not_booster_title"),
+                translate(interaction, "boost.user_not_booster", user=user.mention),
             )
 
         # ① Duplicado
         if user_has and prev_state == linked_to_boost:
             embed = discord.Embed(
-                title="ℹ️ Rol ya asignado",
-                description=(
-                    f"{user.mention} ya posee {role.mention}\n"
-                    f"Estado: {'🔒 Ligado a Boost' if linked_to_boost else '🔓 Normal'}"
+                title=translate(interaction, "boost.role_already.title"),
+                description=translate(
+                    interaction,
+                    "boost.role_already.description",
+                    user=user.mention,
+                    role=role.mention,
+                    status=translate(
+                        interaction,
+                        "boost.linked" if linked_to_boost else "boost.normal",
+                    ),
                 ),
                 color=discord.Color.orange(),
             )
@@ -149,11 +160,20 @@ class BoostRolesCog(commands.Cog):
         if user_has and prev_state is not None and prev_state != linked_to_boost:
             db.add_boost_role(interaction.guild.id, role.id, linked_to_boost)
             embed = discord.Embed(
-                title="🔄 Rol actualizado",
-                description=(
-                    f"{role.mention} para {user.mention} cambió de "
-                    f"{'🔒' if prev_state else '🔓'} ➜ "
-                    f"{'🔒 Ligado a Boost' if linked_to_boost else '🔓 Normal'}."
+                title=translate(interaction, "boost.role_updated.title"),
+                description=translate(
+                    interaction,
+                    "boost.role_updated.description",
+                    role=role.mention,
+                    user=user.mention,
+                    previous=translate(
+                        interaction,
+                        "boost.linked" if prev_state else "boost.normal",
+                    ),
+                    current=translate(
+                        interaction,
+                        "boost.linked" if linked_to_boost else "boost.normal",
+                    ),
                 ),
                 color=discord.Color.gold(),
             )
@@ -167,10 +187,13 @@ class BoostRolesCog(commands.Cog):
         db.add_boost_role(interaction.guild.id, role.id, linked_to_boost)
 
         embed = discord.Embed(
-            title="✅ Rol asignado",
-            description=(
-                f"{role.mention} asignado a {user.mention}\n"
-                f"{'*(Ligado a Boost – se retirará si deja de boostear)*' if linked_to_boost else ''}"
+            title=translate(interaction, "boost.role_assigned.title"),
+            description=translate(
+                interaction,
+                "boost.role_assigned.description",
+                role=role.mention,
+                user=user.mention,
+                note=translate(interaction, "boost.role_assigned.note") if linked_to_boost else "",
             ),
             color=discord.Color.green(),
         )
@@ -195,30 +218,30 @@ class BoostRolesCog(commands.Cog):
         if not interaction.user.guild_permissions.manage_roles:
             return await self._send_error(
                 interaction,
-                "⛔ Permiso insuficiente",
-                "Necesitas **Gestionar roles** para usar este comando.",
+                translate(interaction, "common.error"),
+                translate(interaction, "boost.permission_manage_roles"),
             )
 
         me = interaction.guild.me
         if me is None or role.is_default() or role.managed or role >= me.top_role:
             return await self._send_error(
                 interaction,
-                "⛔ Rol no administrable",
-                "No puedo retirar ese rol por su tipo o posición en la jerarquía.",
+                translate(interaction, "boost.role_not_manageable_title"),
+                translate(interaction, "boost.role_not_manageable"),
             )
         if interaction.user.id != interaction.guild.owner_id and role >= interaction.user.top_role:
             return await self._send_error(
                 interaction,
-                "⛔ Rol demasiado alto",
-                "No puedes administrar un rol igual o superior a tu rol más alto.",
+                translate(interaction, "boost.role_high_title"),
+                translate(interaction, "boost.role_high_self"),
             )
 
         # Existe en configuración?
         if not db.get_boost_role(interaction.guild.id, role.id):
             return await self._send_error(
                 interaction,
-                "ℹ️ Rol no registrado",
-                f"{role.mention} no forma parte de la configuración.",
+                translate(interaction, "boost.role_not_registered_title"),
+                translate(interaction, "boost.role_not_registered", role=role.mention),
                 color=discord.Color.orange(),
                 ephemeral=True,
             )
@@ -227,8 +250,13 @@ class BoostRolesCog(commands.Cog):
         if role not in user.roles:
             return await self._send_error(
                 interaction,
-                "ℹ️ El usuario no tiene ese rol",
-                f"{user.mention} no posee {role.mention}.",
+                translate(interaction, "boost.user_has_no_role_title"),
+                translate(
+                    interaction,
+                    "boost.user_has_no_role",
+                    user=user.mention,
+                    role=role.mention,
+                ),
                 color=discord.Color.orange(),
                 ephemeral=True,
             )
@@ -240,14 +268,16 @@ class BoostRolesCog(commands.Cog):
             db.delete_boost_role(interaction.guild.id, role.id)
 
         embed = discord.Embed(
-            title="🗑️ Rol eliminado",
-            description=(
-                f"{role.mention} se quitó a {user.mention}.\n"
-                + (
-                    "La configuración del rol también se eliminó porque ya no tiene miembros."
-                    if removed_configuration
-                    else "La configuración se conservó porque otros miembros todavía tienen el rol."
-                )
+            title=translate(interaction, "boost.remove.title"),
+            description=translate(
+                interaction,
+                "boost.remove.description",
+                role=role.mention,
+                user=user.mention,
+                result=translate(
+                    interaction,
+                    "boost.remove.config_removed" if removed_configuration else "boost.remove.config_kept",
+                ),
             ),
             color=discord.Color.red(),
         )
@@ -263,15 +293,15 @@ class BoostRolesCog(commands.Cog):
         if not interaction.user.guild_permissions.manage_guild:
             return await self._send_error(
                 interaction,
-                "⛔ Permiso insuficiente",
-                "Necesitas **Gestionar servidor** para usar este comando.",
+                translate(interaction, "common.error"),
+                translate(interaction, "boost.permission_manage_guild"),
             )
 
         db.set_boost_log_channel(interaction.guild.id, channel.id)
 
         embed = discord.Embed(
-            title="✅ Canal de logs establecido",
-            description=f"Los eventos del módulo irán a {channel.mention}.",
+            title=translate(interaction, "boost.log.title"),
+            description=translate(interaction, "boost.log.description", channel=channel.mention),
             color=discord.Color.green(),
         )
         embed = self._with_footer(embed, interaction.user)
@@ -286,8 +316,8 @@ class BoostRolesCog(commands.Cog):
         if not rows:
             return await self._send_error(
                 interaction,
-                "ℹ️ Sin roles registrados",
-                "No se han configurado roles en este servidor.",
+                translate(interaction, "boost.list.empty_title"),
+                translate(interaction, "boost.list.empty_description"),
                 color=discord.Color.blurple(),
                 ephemeral=True,
             )
@@ -300,7 +330,12 @@ class BoostRolesCog(commands.Cog):
             chunk = rows[start : start + ENTRIES_PER_PAGE]
 
             embed = discord.Embed(
-                title=f"📋 Roles configurados (página {page + 1}/{total_pages})",
+                title=translate(
+                    interaction,
+                    "boost.list.page_title",
+                    page=page + 1,
+                    pages=total_pages,
+                ),
                 color=discord.Color.blurple(),
             )
 
@@ -308,11 +343,16 @@ class BoostRolesCog(commands.Cog):
                 role = interaction.guild.get_role(row["role_id"])
                 if not role:
                     continue
-                estado = "🔒 Ligado a Boost" if row["linked_to_boost"] else "🔓 Normal"
-                miembros = ", ".join(m.mention for m in role.members) or "Sin asignar"
+                estado = translate(
+                    interaction,
+                    "boost.linked" if row["linked_to_boost"] else "boost.normal",
+                )
+                miembros = ", ".join(m.mention for m in role.members) or translate(
+                    interaction, "boost.list.unassigned"
+                )
                 embed.add_field(
                     name=f"{role.name} ― ID: {role.id}",
-                    value=f"{estado}\n**Miembros:** {miembros}",
+                    value=(f"{estado}\n**{translate(interaction, 'boost.list.members')}:** {miembros}"),
                     inline=False,
                 )
 
@@ -337,14 +377,16 @@ class BoostRolesCog(commands.Cog):
                 try:
                     await after.remove_roles(*to_remove, reason="Dejó de boostear")
                     embed = discord.Embed(
-                        title="⚠️ Booster perdido",
-                        description=(
-                            f"{after.mention} dejó de boostear.\n"
-                            f"Roles retirados: {', '.join(r.mention for r in to_remove)}"
+                        title=translate(after, "boost.lost.title"),
+                        description=translate(
+                            after,
+                            "boost.lost.description",
+                            user=after.mention,
+                            roles=", ".join(r.mention for r in to_remove),
                         ),
                         color=discord.Color.red(),
                     )
-                    embed = self._with_footer(embed, None)
+                    embed = self._with_footer(embed, None, after.guild)
                     await self._send_log(after.guild, embed)
                 except discord.Forbidden:
                     log.warning(
@@ -377,11 +419,16 @@ class BoostRolesCog(commands.Cog):
                         try:
                             await member.remove_roles(role, reason="Auditoría Boost: dejó de boostear")
                             embed = discord.Embed(
-                                title="🚫 Auditoría: rol retirado",
-                                description=f"Se retiró {role.mention} de {member.mention}.",
+                                title=translate(guild, "boost.audit.title"),
+                                description=translate(
+                                    guild,
+                                    "boost.audit.description",
+                                    role=role.mention,
+                                    user=member.mention,
+                                ),
                                 color=discord.Color.red(),
                             )
-                            embed = self._with_footer(embed, None)
+                            embed = self._with_footer(embed, None, guild)
                             await self._send_log(guild, embed)
                         except discord.Forbidden:
                             log.warning(
@@ -404,9 +451,19 @@ class BoostRolesCog(commands.Cog):
         await self.bot.wait_until_ready()
 
     # ─────────────── Helpers embeds / logs ────────────────
-    def _with_footer(self, embed: discord.Embed, user: discord.User | None):
+    def _with_footer(
+        self,
+        embed: discord.Embed,
+        user: discord.User | None,
+        guild: discord.Guild | None = None,
+    ):
+        source = user if isinstance(user, discord.Member) else guild
         embed.set_footer(
-            text=f"Solicitado por {user.display_name}" if user else "Sistema automático",
+            text=(
+                translate(source, "boost.requested_by", user=user.display_name)
+                if user
+                else translate(source, "boost.automatic")
+            ),
             icon_url=user.display_avatar.url if user else None,
         )
         return embed

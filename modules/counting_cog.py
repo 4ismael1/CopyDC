@@ -9,6 +9,7 @@ from discord.ext import commands
 
 import database as db
 from command_utils import is_interaction_context, looks_like_command, send_response
+from localization import translate
 
 
 class CountingCog(commands.Cog):
@@ -46,8 +47,7 @@ class CountingCog(commands.Cog):
     async def counting(self, ctx: commands.Context):
         await send_response(
             ctx,
-            "Usa `c!counting set`, `!counting set` o `/counting set`. "
-            "También tienes `remove`, `reset`, `status` y `panel`.",
+            translate(ctx, "counting.help"),
             mention_author=False,
             ephemeral=True,
         )
@@ -68,12 +68,10 @@ class CountingCog(commands.Cog):
             },
         )
 
-        await channel.send(
-            "Este canal ha sido configurado para contar. Si alguien se equivoca, volvemos a empezar. El primer numero es el **1**."
-        )
+        await channel.send(translate(ctx, "counting.setup_message"))
         await send_response(
             ctx,
-            f"Canal de conteo configurado en {channel.mention}.",
+            translate(ctx, "counting.configured", channel=channel.mention),
             mention_author=False,
             ephemeral=True,
         )
@@ -89,7 +87,7 @@ class CountingCog(commands.Cog):
         if not channel_data:
             await send_response(
                 ctx,
-                "Este canal no está configurado para contar.",
+                translate(ctx, "counting.not_configured"),
                 mention_author=False,
                 ephemeral=True,
             )
@@ -99,7 +97,7 @@ class CountingCog(commands.Cog):
         self._set_channel_cache(ctx.channel.id, None)
         await send_response(
             ctx,
-            "El conteo fue desactivado en este canal.",
+            translate(ctx, "counting.disabled"),
             mention_author=False,
             ephemeral=True,
         )
@@ -111,7 +109,7 @@ class CountingCog(commands.Cog):
         if not channel_data:
             await send_response(
                 ctx,
-                "Este canal no esta configurado para contar.",
+                translate(ctx, "counting.not_configured"),
                 mention_author=False,
                 ephemeral=True,
             )
@@ -123,7 +121,7 @@ class CountingCog(commands.Cog):
         self._set_channel_cache(ctx.channel.id, channel_data)
         await send_response(
             ctx,
-            "El conteo ha sido reseteado. El siguiente numero es el **1**.",
+            translate(ctx, "counting.reset"),
             mention_author=False,
         )
 
@@ -134,7 +132,7 @@ class CountingCog(commands.Cog):
         if not channel_data:
             await send_response(
                 ctx,
-                "Este canal no esta configurado para contar.",
+                translate(ctx, "counting.not_configured"),
                 mention_author=False,
                 ephemeral=True,
             )
@@ -145,11 +143,19 @@ class CountingCog(commands.Cog):
             ctx.guild.get_member(channel_data["last_user_id"]) if channel_data["last_user_id"] else None
         )
 
-        embed = discord.Embed(title="Estado del conteo", color=0xF1C40F)
-        embed.add_field(name="Canal", value=ctx.channel.mention, inline=True)
-        embed.add_field(name="Siguiente numero", value=str(next_number), inline=True)
-        embed.add_field(name="Ultimo usuario", value=last_user.mention if last_user else "Nadie", inline=True)
-        embed.add_field(name="Récord", value=str(channel_data["high_score"]), inline=True)
+        embed = discord.Embed(title=translate(ctx, "counting.status_title"), color=0xF1C40F)
+        embed.add_field(name=translate(ctx, "counting.channel_field"), value=ctx.channel.mention, inline=True)
+        embed.add_field(name=translate(ctx, "counting.next_field"), value=str(next_number), inline=True)
+        embed.add_field(
+            name=translate(ctx, "counting.last_user_field"),
+            value=last_user.mention if last_user else translate(ctx, "counting.never"),
+            inline=True,
+        )
+        embed.add_field(
+            name=translate(ctx, "counting.record_field"),
+            value=str(channel_data["high_score"]),
+            inline=True,
+        )
         await send_response(ctx, embed=embed, mention_author=False, ephemeral=True)
 
     @commands.Cog.listener("on_message")
@@ -183,8 +189,12 @@ class CountingCog(commands.Cog):
                     await message.delete()
 
                 await message.channel.send(
-                    f"{message.author.mention}, no puedes contar dos veces seguidas. "
-                    f"El siguiente número es **{current_number + 1}**."
+                    translate(
+                        message,
+                        "counting.same_user",
+                        user=message.author.mention,
+                        next_number=current_number + 1,
+                    )
                 )
                 return
 
@@ -196,7 +206,7 @@ class CountingCog(commands.Cog):
                 channel_data["last_user_id"] = 0
                 self._set_channel_cache(message.channel.id, channel_data)
                 await message.reply(
-                    "Número incorrecto. El conteo se ha reiniciado. El siguiente número es el **1**.",
+                    translate(message, "counting.wrong_number"),
                     mention_author=False,
                 )
                 return

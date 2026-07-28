@@ -11,8 +11,9 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 import database as db
+import localization
 from command_utils import build_presence_activity, resolve_presence_status, send_response
-from modules.help_cog import resolve_help_language
+from localization import get_language, translate, translate_language
 
 load_dotenv()
 
@@ -85,104 +86,38 @@ def total_users_all_guilds(bot: commands.Bot) -> int:
     return sum((guild.member_count or 0) for guild in bot.guilds)
 
 
-def format_permissions(perms: list[str]) -> str:
-    readable_names = {
-        "administrator": "Administrador",
-        "manage_guild": "Gestionar servidor",
-        "manage_channels": "Gestionar canales",
-        "manage_roles": "Gestionar roles",
-        "manage_messages": "Gestionar mensajes",
-        "manage_expressions": "Gestionar expresiones",
-        "view_audit_log": "Ver registro de auditoria",
-        "add_reactions": "Anadir reacciones",
-        "send_messages": "Enviar mensajes",
-        "embed_links": "Insertar enlaces",
-    }
-    return ", ".join(readable_names.get(perm, perm.replace("_", " ")) for perm in perms)
+def format_permissions(perms: list[str], language: str) -> str:
+    keys = localization.catalog_keys(language)
+    return ", ".join(
+        translate_language(language, f"permissions.{permission}")
+        if f"permissions.{permission}" in keys
+        else permission.replace("_", " ")
+        for permission in perms
+    )
 
 
 def build_welcome_embed(bot_user: discord.ClientUser, guild: discord.Guild, *, lang: str) -> discord.Embed:
-    if lang == "en":
-        embed = discord.Embed(
-            title=f"Thanks for inviting {bot_user.display_name}",
-            description=(
-                "Start with `c!help`, `!help`, or `/help`.\n"
-                "The bot supports text commands and slash commands for faster setup."
-            ),
-            color=0x5865F2,
-        )
-        embed.add_field(
-            name="Quick start",
-            value=(
-                "`/help` or `c!help`\n"
-                "`/thread add` for auto threads\n"
-                "`/counting set` for counting\n"
-                "`/react add` for automatic reactions"
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="Setup modules",
-            value=(
-                "`/thread`, `/counting`, `/react`\n"
-                "`/vanity`, `/clantag`, `/boostrole`\n"
-                "`/case` for support records, `/lfg` for live groups\n"
-                "They also work with `c!` and `!`."
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="Before you start",
-            value=(
-                "Place the bot role above the roles it will assign.\n"
-                "Give it permissions to send messages, embed links, manage roles, and manage channels depending on the module."
-            ),
-            inline=False,
-        )
-        embed.set_footer(
-            text=f"Server: {guild.name} | If slash commands do not appear immediately, wait a few seconds and try again."
-        )
-        return embed
-
     embed = discord.Embed(
-        title=f"Gracias por invitar a {bot_user.display_name}",
-        description=(
-            "Empieza con `c!help`, `!help` o `/help`.\n"
-            "El bot mantiene comandos de texto y ahora tambien slash commands para configurarlo mas rapido."
-        ),
+        title=translate_language(lang, "welcome.title", bot=bot_user.display_name),
+        description=translate_language(lang, "welcome.description"),
         color=0x5865F2,
     )
     embed.add_field(
-        name="Inicio rapido",
-        value=(
-            "`/help` o `c!help`\n"
-            "`/thread add` para hilos automaticos\n"
-            "`/counting set` para conteo\n"
-            "`/react add` para reacciones automaticas"
-        ),
+        name=translate_language(lang, "welcome.quick.name"),
+        value=translate_language(lang, "welcome.quick.value"),
         inline=False,
     )
     embed.add_field(
-        name="Modulos de configuracion",
-        value=(
-            "`/thread`, `/counting`, `/react`\n"
-            "`/vanity`, `/clantag`, `/boostrole`\n"
-            "`/case` para soporte, `/lfg` para grupos en vivo\n"
-            "Tambien funcionan con `c!` y `!`."
-        ),
+        name=translate_language(lang, "welcome.modules.name"),
+        value=translate_language(lang, "welcome.modules.value"),
         inline=False,
     )
     embed.add_field(
-        name="Antes de empezar",
-        value=(
-            "Pon el rol del bot por encima de los roles que va a dar.\n"
-            "Dale permisos de enviar mensajes, insertar enlaces, gestionar roles y gestionar canales segun el modulo que uses."
-        ),
+        name=translate_language(lang, "welcome.before.name"),
+        value=translate_language(lang, "welcome.before.value"),
         inline=False,
     )
-    embed.set_footer(
-        text=f"Servidor: {guild.name} | Si no ves / al instante, espera unos segundos y vuelve a probar."
-    )
+    embed.set_footer(text=translate_language(lang, "welcome.footer", guild=guild.name))
     return embed
 
 
@@ -198,6 +133,7 @@ class MyBot(commands.Bot):
     async def setup_hook(self):
         try:
             db.setup_database()
+            localization.initialize()
             log.info("Base de datos conectada y lista.")
         except Exception as exc:
             log.error("ERROR CRITICO: no se pudo inicializar la base de datos.")
@@ -302,7 +238,7 @@ class MyBot(commands.Bot):
         embed = build_welcome_embed(
             self.user,
             guild,
-            lang=resolve_help_language(getattr(guild, "preferred_locale", None)),
+            lang=get_language(guild),
         )
         me = guild.me or guild.get_member(self.user.id)
 
@@ -379,6 +315,7 @@ async def on_guild_join(guild: discord.Guild):
 @bot.event
 async def on_guild_remove(guild: discord.Guild):
     await asyncio.to_thread(db.remove_guild, guild)
+    localization.remove_guild_mode(guild.id)
     total = total_users_all_guilds(bot)
     log.info(
         f"Salio de {guild.name or 'servidor desconocido'} ({guild.id}) | "
@@ -403,7 +340,7 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.MissingRequiredArgument):
         await send_response(
             ctx,
-            f"Ups, te falto un argumento: `{error.param.name}`. Usa `c!help`, `!help` o `/help` si necesitas un ejemplo.",
+            translate(ctx, "error.missing_argument", argument=error.param.name),
             mention_author=False,
             ephemeral=True,
         )
@@ -412,7 +349,7 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.ChannelNotFound):
         await send_response(
             ctx,
-            "No encontre ese canal. Menciona un canal real como `#general` o usa su ID. No escribas el placeholder literal `#canal`.",
+            translate(ctx, "error.channel_not_found"),
             mention_author=False,
             ephemeral=True,
         )
@@ -421,7 +358,7 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.RoleNotFound):
         await send_response(
             ctx,
-            "No encontre ese rol. Menciona el rol real con `@rol` o usa su ID.",
+            translate(ctx, "error.role_not_found"),
             mention_author=False,
             ephemeral=True,
         )
@@ -430,7 +367,7 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.MemberNotFound):
         await send_response(
             ctx,
-            "No encontre a ese usuario en este servidor. Usa una mencion, su nombre exacto o el ID.",
+            translate(ctx, "error.member_not_found"),
             mention_author=False,
             ephemeral=True,
         )
@@ -439,26 +376,35 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.BadArgument):
         await send_response(
             ctx,
-            "Uno de los argumentos no es valido para este comando. Si era un canal o rol, usa la mencion real del selector de Discord.",
+            translate(ctx, "error.bad_argument"),
             mention_author=False,
             ephemeral=True,
         )
         return
 
     if isinstance(error, commands.MissingPermissions):
+        language = get_language(ctx)
         await send_response(
             ctx,
-            f"No tienes los permisos necesarios para usar este comando. Te faltan: {format_permissions(error.missing_permissions)}.",
+            translate(
+                ctx,
+                "error.missing_permissions",
+                permissions=format_permissions(error.missing_permissions, language),
+            ),
             mention_author=False,
             ephemeral=True,
         )
         return
 
     if isinstance(error, commands.BotMissingPermissions):
+        language = get_language(ctx)
         await send_response(
             ctx,
-            f"No puedo completar ese comando porque me faltan permisos: "
-            f"{format_permissions(error.missing_permissions)}.",
+            translate(
+                ctx,
+                "error.bot_missing_permissions",
+                permissions=format_permissions(error.missing_permissions, language),
+            ),
             mention_author=False,
             ephemeral=True,
         )
@@ -471,7 +417,7 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(original, discord.Forbidden):
         await send_response(
             ctx,
-            "Discord rechazó la operación porque al bot le falta acceso o su rol está demasiado bajo.",
+            translate(ctx, "error.discord_forbidden"),
             mention_author=False,
             ephemeral=True,
         )
@@ -495,32 +441,37 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
             await interaction.response.send_message(message, ephemeral=True)
 
     if isinstance(original, commands.MissingPermissions):
+        language = get_language(interaction)
         await respond(
-            f"No tienes los permisos necesarios para usar este comando. Te faltan: {format_permissions(original.missing_permissions)}."
+            translate(
+                interaction,
+                "error.missing_permissions",
+                permissions=format_permissions(original.missing_permissions, language),
+            )
         )
         return
 
     if isinstance(original, commands.BotMissingPermissions):
+        language = get_language(interaction)
         await respond(
-            f"No puedo completar ese comando porque me faltan permisos: "
-            f"{format_permissions(original.missing_permissions)}."
+            translate(
+                interaction,
+                "error.bot_missing_permissions",
+                permissions=format_permissions(original.missing_permissions, language),
+            )
         )
         return
 
     if isinstance(original, discord.Forbidden):
-        await respond(
-            "Discord rechazó la operación porque al bot le falta acceso o su rol está demasiado bajo."
-        )
+        await respond(translate(interaction, "error.discord_forbidden"))
         return
 
     if isinstance(error, app_commands.CheckFailure):
-        await respond("No tienes permisos suficientes para usar este slash command.")
+        await respond(translate(interaction, "error.slash_check_failed"))
         return
 
     if isinstance(error, app_commands.TransformerError):
-        await respond(
-            "No pude interpretar uno de los argumentos. Si era un canal o rol, usa la opcion real del selector de Discord."
-        )
+        await respond(translate(interaction, "error.transformer"))
         return
 
     log.error(
@@ -528,7 +479,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         getattr(interaction.command, "qualified_name", "desconocido"),
         exc_info=(type(original), original, original.__traceback__),
     )
-    await respond("Ocurrio un error inesperado al ejecutar este comando.")
+    await respond(translate(interaction, "error.unexpected"))
 
 
 async def main():

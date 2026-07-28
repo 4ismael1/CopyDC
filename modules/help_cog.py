@@ -1,19 +1,15 @@
 import discord
 from discord.ext import commands
 
+from localization import get_language, resolve_discord_locale
+
 PRIVACY_URL = "https://copy.tyr.lat/privacy"
 TERMS_URL = "https://copy.tyr.lat/terms"
 
 
 def resolve_help_language(locale: object | None) -> str:
     """Mapea un locale de Discord a 'es' o 'en'."""
-    if locale is None:
-        return "es"
-
-    normalized = str(locale).lower()
-    if normalized.startswith("es"):
-        return "es"
-    return "en"
+    return resolve_discord_locale(locale)
 
 
 def get_help_embeds(lang: str = "es") -> list[discord.Embed]:
@@ -658,8 +654,7 @@ class HelpCog(commands.Cog):
     @commands.command(name="help")
     async def custom_help(self, ctx: commands.Context):
         """Muestra el menu de ayuda con selector de idioma y secciones."""
-        locale = getattr(ctx.guild, "preferred_locale", None) if ctx.guild else None
-        view = HelpView(lang=resolve_help_language(locale), current_index=0)
+        view = HelpView(lang=get_language(ctx), current_index=0)
         await ctx.reply(embed=view.embeds[0], view=view, mention_author=False)
 
 

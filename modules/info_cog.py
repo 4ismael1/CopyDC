@@ -5,6 +5,8 @@ from collections import Counter, defaultdict
 import discord
 from discord.ext import commands
 
+from localization import translate
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Emojis para insignias (public_flags)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -27,15 +29,15 @@ BADGE_EMOJIS = {
 
 # Permisos clave “sensibles” para mostrar en roleinfo
 KEY_PERMS = {
-    "Administrador": "administrator",
-    "Gestionar Servidor": "manage_guild",
-    "Gestionar Canales": "manage_channels",
-    "Gestionar Roles": "manage_roles",
-    "Gestionar Mensajes": "manage_messages",
-    "Expulsar Miembros": "kick_members",
-    "Banear Miembros": "ban_members",
-    "Mencionar @everyone": "mention_everyone",
-    "Registro de Auditoría": "view_audit_log",
+    "administrator": "administrator",
+    "manage_guild": "manage_guild",
+    "manage_channels": "manage_channels",
+    "manage_roles": "manage_roles",
+    "manage_messages": "manage_messages",
+    "kick_members": "kick_members",
+    "ban_members": "ban_members",
+    "mention_everyone": "mention_everyone",
+    "view_audit_log": "view_audit_log",
 }
 
 
@@ -59,12 +61,17 @@ class InfoCog(commands.Cog):
         return " ".join(out) if out else None
 
     @staticmethod
-    def _truncate_list(items: list[str], visible: int = 5) -> str:
+    def _truncate_list(items: list[str], source, visible: int = 5) -> str:
         if not items:
             return "—"
         if len(items) <= visible:
             return " ".join(items)
-        return f"{' '.join(items[:visible])} y **{len(items) - visible}** más…"
+        return translate(
+            source,
+            "info.list_more",
+            items=" ".join(items[:visible]),
+            count=len(items) - visible,
+        )
 
     async def _resolve_target(
         self, ctx: commands.Context, target: discord.Member | discord.User | int | None
@@ -162,20 +169,22 @@ class InfoCog(commands.Cog):
         created_at = getattr(user_profile, "created_at", None)
         if created_at:
             embed.add_field(
-                name="Se unió a Discord", value=f"<t:{int(created_at.timestamp())}:R>", inline=True
+                name=translate(ctx, "info.joined_discord"),
+                value=f"<t:{int(created_at.timestamp())}:R>",
+                inline=True,
             )
 
         # Insignias (públicas)
         badges = self._format_badges(getattr(user_profile, "public_flags", None))
         if badges:
-            embed.add_field(name="Insignias", value=badges, inline=False)
+            embed.add_field(name=translate(ctx, "info.badges"), value=badges, inline=False)
 
         # ── Modo MD: no hay datos del servidor ──
         if ctx.guild is None or not guild_member:
             view = discord.ui.View()
             view.add_item(
                 discord.ui.Button(
-                    label="Foto de Perfil",
+                    label=translate(ctx, "info.profile_picture"),
                     style=discord.ButtonStyle.link,
                     url=user_profile.display_avatar.url,
                     emoji="🖼️",
@@ -184,7 +193,7 @@ class InfoCog(commands.Cog):
             if user_profile.banner:
                 view.add_item(
                     discord.ui.Button(
-                        label="Banner",
+                        label=translate(ctx, "info.banner"),
                         style=discord.ButtonStyle.link,
                         url=user_profile.banner.url,
                         emoji="🌄",
@@ -195,12 +204,12 @@ class InfoCog(commands.Cog):
         # ── Modo Servidor: datos ampliados ──
         if guild_member.joined_at:
             embed.add_field(
-                name="Se unió al Servidor",
+                name=translate(ctx, "info.joined_server"),
                 value=f"<t:{int(guild_member.joined_at.timestamp())}:R>",
                 inline=True,
             )
         else:
-            embed.add_field(name="Se unió al Servidor", value="—", inline=True)
+            embed.add_field(name=translate(ctx, "info.joined_server"), value="—", inline=True)
 
         # Separador visual
         embed.add_field(name="\u200b", value="\u200b", inline=True)
@@ -208,7 +217,9 @@ class InfoCog(commands.Cog):
         # Roles (sin @everyone)
         roles = [r.mention for r in reversed(guild_member.roles) if not r.is_default()]
         embed.add_field(
-            name=f"Roles [{len(roles)}]", value=self._truncate_list(roles, visible=8), inline=False
+            name=f"{translate(ctx, 'info.roles')} [{len(roles)}]",
+            value=self._truncate_list(roles, ctx, visible=8),
+            inline=False,
         )
 
         # Actividad/estado actual si existe
@@ -216,14 +227,18 @@ class InfoCog(commands.Cog):
             try:
                 act_type = getattr(guild_member.activity.type, "name", "Activity").title()
                 act_name = getattr(guild_member.activity, "name", "—")
-                embed.add_field(name="Actividad Actual", value=f"**{act_type}:** {act_name}", inline=False)
+                embed.add_field(
+                    name=translate(ctx, "info.activity"),
+                    value=f"**{act_type}:** {act_name}",
+                    inline=False,
+                )
             except Exception:
                 pass
 
         # Boost actual
         if guild_member.premium_since:
             embed.add_field(
-                name="Boosteando desde",
+                name=translate(ctx, "info.boost.since"),
                 value=f"<t:{int(guild_member.premium_since.timestamp())}:R>",
                 inline=True,
             )
@@ -231,7 +246,7 @@ class InfoCog(commands.Cog):
         view = discord.ui.View()
         view.add_item(
             discord.ui.Button(
-                label="Foto de Perfil",
+                label=translate(ctx, "info.profile_picture"),
                 style=discord.ButtonStyle.link,
                 url=guild_member.display_avatar.url,
                 emoji="🖼️",
@@ -240,7 +255,10 @@ class InfoCog(commands.Cog):
         if user_profile.banner:
             view.add_item(
                 discord.ui.Button(
-                    label="Banner", style=discord.ButtonStyle.link, url=user_profile.banner.url, emoji="🌄"
+                    label=translate(ctx, "info.banner"),
+                    style=discord.ButtonStyle.link,
+                    url=user_profile.banner.url,
+                    emoji="🌄",
                 )
             )
 
@@ -254,7 +272,9 @@ class InfoCog(commands.Cog):
     async def server_info(self, ctx: commands.Context):
         guild = ctx.guild
         embed = discord.Embed(
-            title="Información del Servidor", color=discord.Color.blue(), timestamp=datetime.datetime.utcnow()
+            title=translate(ctx, "info.server_info"),
+            color=discord.Color.blue(),
+            timestamp=datetime.datetime.utcnow(),
         )
 
         if guild.icon:
@@ -276,44 +296,74 @@ class InfoCog(commands.Cog):
         stage_channels = len(guild.stage_channels)
         thread_count = sum(len(c.threads) for c in guild.text_channels)
 
-        owner_text = guild.owner.mention if guild.owner else f"ID: `{guild.owner_id}` (No encontrado)"
-        embed.add_field(name="Dueño", value=owner_text, inline=True)
+        owner_text = (
+            guild.owner.mention
+            if guild.owner
+            else translate(ctx, "info.owner_missing", owner_id=guild.owner_id)
+        )
+        embed.add_field(name=translate(ctx, "info.owner"), value=owner_text, inline=True)
         embed.add_field(
-            name="Nivel de Boost",
-            value=f"Nivel {guild.premium_tier} ({guild.premium_subscription_count} boosts)",
+            name=translate(ctx, "info.server_boost"),
+            value=translate(
+                ctx,
+                "info.server_boost_value",
+                level=guild.premium_tier,
+                count=guild.premium_subscription_count,
+            ),
             inline=True,
         )
-        embed.add_field(name="Roles", value=str(len(guild.roles)), inline=True)
+        embed.add_field(name=translate(ctx, "info.roles"), value=str(len(guild.roles)), inline=True)
 
         embed.add_field(
-            name="Miembros",
-            value=f"**Total:** {total_members}\n**Humanos:** {humans}\n**Bots:** {bots}",
+            name=translate(ctx, "info.members"),
+            value=translate(
+                ctx,
+                "info.members_value",
+                total=total_members,
+                humans=humans,
+                bots=bots,
+            ),
             inline=True,
         )
 
         embed.add_field(
-            name="Canales",
-            value=f"**Texto:** {text_channels}\n**Voz:** {voice_channels}\n**Stage:** {stage_channels}\n**Hilos:** {thread_count}",
+            name=translate(ctx, "info.channels"),
+            value=translate(
+                ctx,
+                "info.channels_value",
+                text=text_channels,
+                voice=voice_channels,
+                stage=stage_channels,
+                threads=thread_count,
+            ),
             inline=True,
         )
 
         # Extras no intrusivos
         if guild.verification_level is not None:
             embed.add_field(
-                name="Nivel de Verificación", value=str(guild.verification_level).title(), inline=True
+                name=translate(ctx, "info.verification"),
+                value=str(guild.verification_level).title(),
+                inline=True,
             )
 
         view = discord.ui.View()
         if guild.icon:
             view.add_item(
                 discord.ui.Button(
-                    label="Icono del Servidor", style=discord.ButtonStyle.link, url=guild.icon.url, emoji="🖼️"
+                    label=translate(ctx, "info.server_icon"),
+                    style=discord.ButtonStyle.link,
+                    url=guild.icon.url,
+                    emoji="🖼️",
                 )
             )
         if guild.banner:
             view.add_item(
                 discord.ui.Button(
-                    label="Banner", style=discord.ButtonStyle.link, url=guild.banner.url, emoji="🌄"
+                    label=translate(ctx, "info.banner"),
+                    style=discord.ButtonStyle.link,
+                    url=guild.banner.url,
+                    emoji="🌄",
                 )
             )
 
@@ -329,14 +379,19 @@ class InfoCog(commands.Cog):
         user_profile, member = await self._resolve_target(ctx, target)
         display_name = member.display_name if member else user_profile.name
         embed = discord.Embed(
-            title=f"Avatar de {display_name}",
+            title=translate(ctx, "info.avatar_title", user=display_name),
             color=(member.color if member and member.color.value else discord.Color.blurple()),
         )
         avatar_url = user_profile.display_avatar.with_size(1024).url
         embed.set_image(url=avatar_url)
         view = discord.ui.View()
         view.add_item(
-            discord.ui.Button(label="Abrir Avatar", style=discord.ButtonStyle.link, url=avatar_url, emoji="🖼️")
+            discord.ui.Button(
+                label=translate(ctx, "info.avatar_open"),
+                style=discord.ButtonStyle.link,
+                url=avatar_url,
+                emoji="🖼️",
+            )
         )
         await ctx.reply(embed=embed, view=view, mention_author=False)
 
@@ -348,29 +403,45 @@ class InfoCog(commands.Cog):
     async def role_info(self, ctx: commands.Context, *, role: discord.Role):
         """Muestra información detallada sobre un rol."""
         embed = discord.Embed(
-            title="Información del Rol",
+            title=translate(ctx, "info.role_info"),
             color=role.color or discord.Color.blurple(),
             timestamp=datetime.datetime.utcnow(),
         )
         embed.set_author(name=f"@{role.name}")
-        embed.set_footer(text=f"ID del Rol: {role.id}")
+        embed.set_footer(text=translate(ctx, "info.role_id", role_id=role.id))
 
         # General
-        embed.add_field(name="Miembros", value=str(len(role.members)), inline=True)
-        embed.add_field(name="Color (HEX)", value=str(role.color), inline=True)
-        embed.add_field(name="Posición", value=str(role.position), inline=True)
-        embed.add_field(name="Mencionable", value="Sí" if role.mentionable else "No", inline=True)
-        embed.add_field(name="Separado", value="Sí" if role.hoist else "No", inline=True)
+        embed.add_field(name=translate(ctx, "info.members"), value=str(len(role.members)), inline=True)
+        embed.add_field(name=translate(ctx, "info.color"), value=str(role.color), inline=True)
+        embed.add_field(name=translate(ctx, "info.position"), value=str(role.position), inline=True)
+        embed.add_field(
+            name=translate(ctx, "info.role_mentionable"),
+            value=translate(ctx, "info.yes" if role.mentionable else "info.no"),
+            inline=True,
+        )
+        embed.add_field(
+            name=translate(ctx, "info.role_hoisted"),
+            value=translate(ctx, "info.yes" if role.hoist else "info.no"),
+            inline=True,
+        )
         if role.created_at:
-            embed.add_field(name="Creado", value=f"<t:{int(role.created_at.timestamp())}:R>", inline=True)
+            embed.add_field(
+                name=translate(ctx, "info.created"),
+                value=f"<t:{int(role.created_at.timestamp())}:R>",
+                inline=True,
+            )
 
         # Permisos clave
         if role.permissions.administrator:
-            perms_text = "✅ **Administrador** (tiene todos los permisos)"
+            perms_text = f"✅ **{translate(ctx, 'info.key_permissions.admin')}**"
         else:
-            enabled = [name for name, attr in KEY_PERMS.items() if getattr(role.permissions, attr, False)]
-            perms_text = ", ".join(enabled) if enabled else "Ninguno"
-        embed.add_field(name="Permisos Clave", value=perms_text, inline=False)
+            enabled = [
+                translate(ctx, f"info.permissions.{name}")
+                for name, attr in KEY_PERMS.items()
+                if getattr(role.permissions, attr, False)
+            ]
+            perms_text = ", ".join(enabled) if enabled else translate(ctx, "info.none")
+        embed.add_field(name=translate(ctx, "info.key_permissions"), value=perms_text, inline=False)
 
         await ctx.reply(embed=embed, mention_author=False)
 
@@ -389,21 +460,33 @@ class InfoCog(commands.Cog):
         user_profile, member = await self._resolve_target(ctx, target)
         # Si no es miembro del servidor, no podemos ver premium_since (datos del guild)
         if member is None:
-            return await ctx.reply("Ese usuario no es miembro de este servidor.", mention_author=False)
+            return await ctx.reply(translate(ctx, "info.not_member"), mention_author=False)
 
         total_hist = self._boost_history[ctx.guild.id].get(member.id, 0)
         activo = member.premium_since is not None
 
         embed = discord.Embed(
-            title="Boost del usuario", color=discord.Color.fuchsia(), timestamp=datetime.datetime.utcnow()
+            title=translate(ctx, "info.boost.title"),
+            color=discord.Color.fuchsia(),
+            timestamp=datetime.datetime.utcnow(),
         )
         embed.set_author(name=str(member), icon_url=member.display_avatar.url)
-        embed.add_field(name="Boost activo ahora mismo", value="Sí ✅" if activo else "No ❌", inline=True)
-        embed.add_field(name="Veces detectadas empezando a boostear", value=str(total_hist), inline=True)
+        embed.add_field(
+            name=translate(ctx, "info.boost.active"),
+            value=f"{translate(ctx, 'info.yes' if activo else 'info.no')} {'✅' if activo else '❌'}",
+            inline=True,
+        )
+        embed.add_field(
+            name=translate(ctx, "info.boost.detected"),
+            value=str(total_hist),
+            inline=True,
+        )
 
         if activo:
             embed.add_field(
-                name="Boost desde", value=f"<t:{int(member.premium_since.timestamp())}:R>", inline=False
+                name=translate(ctx, "info.boost.since"),
+                value=f"<t:{int(member.premium_since.timestamp())}:R>",
+                inline=False,
             )
 
         await ctx.reply(embed=embed, mention_author=False)

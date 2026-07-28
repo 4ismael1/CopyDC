@@ -130,6 +130,18 @@ class DatabaseIntegrityTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             db.set_clantag_settings(10, malicious_column="x")
 
+    def test_guild_language_is_persisted_and_validated(self):
+        self.assertEqual(db.get_guild_language(10), "auto")
+
+        db.set_guild_language(10, "es")
+        self.assertEqual(db.get_guild_language(10), "es")
+
+        db.set_guild_language(10, "en")
+        self.assertEqual(db.get_guild_language(10), "en")
+
+        with self.assertRaises(ValueError):
+            db.set_guild_language(10, "fr")
+
     def test_support_archive_retention_is_per_guild(self):
         db.set_support_settings(10, 100, 101, 102, 30)
         case_id = db.create_support_case(10, 103, 42, "Caso", "2026-06-01T00:00:00+00:00")

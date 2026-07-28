@@ -4,6 +4,8 @@
 
 ### Añadido
 
+- Sistema bilingüe español/inglés con detección automática del idioma del
+  servidor y selección persistente mediante `/language`.
 - Nuevo `/case` con canales privados, transcript HTML sanitizado, SHA-256,
   compresión y retención automática.
 - Nuevo `/lfg` con inscripción voluntaria, juegos y roles configurables, panel

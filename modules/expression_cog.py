@@ -11,6 +11,8 @@ import discord
 from discord.ext import commands
 from PIL import Image, ImageOps
 
+from localization import translate
+
 log = logging.getLogger("bot")
 
 # ────────────── UTILIDADES ──────────────
@@ -24,12 +26,6 @@ MAX_INPUT_BYTES = 8 * 1024 * 1024
 MAX_INPUT_PIXELS = 25_000_000
 ANIMATED_FORMATS = {"GIF", "APNG"}
 IMAGE_ATTACHMENT_FORMATS = (".png", ".apng", ".gif", ".jpg", ".jpeg", ".webp")
-STICKER_COPY_HELP = "Ese ya es un sticker. El comando correcto es `!copy` respondiendo al sticker."
-IMAGE_COPY_HELP = "Eso es una imagen. Usa `!sticker` para sticker o `!emoji` para emoji."
-STICKER_USAGE_HELP = "Responde a una imagen con `!sticker` para subirla como sticker."
-EMOJI_COPY_HELP = "Ese ya es un emoji. El comando correcto es `!copy` respondiendo al mensaje."
-EMOJI_USAGE_HELP = "Responde a una imagen con `!emoji` para subirla como emoji."
-NO_EXPRESSION_HELP = "No detecte imagen, sticker ni emoji en ese mensaje."
 
 
 def parse_custom_emoji(tag: str):
@@ -157,7 +153,7 @@ def compress_static_image_for_discord(
     )
 
 
-def describe_expression_upload_error(exc: discord.HTTPException, kind: str) -> str:
+def describe_expression_upload_error(source, exc: discord.HTTPException, kind: str) -> str:
     raw_text = str(getattr(exc, "text", "") or exc)
     lowered = raw_text.lower()
     code = getattr(exc, "code", None)
@@ -167,28 +163,28 @@ def describe_expression_upload_error(exc: discord.HTTPException, kind: str) -> s
         or "maximum number of stickers" in lowered
         or ("sticker" in lowered and "maximum" in lowered)
     ):
-        return (
-            "No pude agregar el sticker porque este servidor ya alcanzo su limite de stickers. "
-            "Borra un sticker existente o aumenta el nivel del servidor antes de intentarlo otra vez."
-        )
+        return translate(source, "expression.upload_sticker_limit")
 
     if kind == "emoji" and (
         code == 30008
         or "maximum number of emojis" in lowered
         or ("emoji" in lowered and "maximum" in lowered)
     ):
-        return (
-            "No pude agregar el emoji porque este servidor ya alcanzo su limite de emojis. "
-            "Borra un emoji existente o aumenta el nivel del servidor antes de intentarlo otra vez."
-        )
+        return translate(source, "expression.upload_emoji_limit")
 
     if getattr(exc, "status", None) == 400:
-        return (
-            f"Discord rechazo el {kind}. Puede que el archivo siga superando el limite, "
-            "tenga un formato no aceptado o el servidor haya alcanzado su limite."
-        )
+        return translate(source, "expression.upload_bad_request", kind=kind)
 
-    return f"No se pudo subir el {kind}: {exc}"
+    return translate(source, "expression.upload_failed", kind=kind)
+
+
+def describe_processing_error(source, exc: ValueError) -> str:
+    lowered = str(exc).lower()
+    if "píxeles" in lowered or "pixeles" in lowered:
+        return translate(source, "expression.image_pixels")
+    if "límite de descarga" in lowered or "límite de entrada" in lowered:
+        return translate(source, "expression.input_large")
+    return translate(source, "expression.processing_error")
 
 
 # ────────────── COG DE EXPRESIONES ──────────────
@@ -227,7 +223,7 @@ class ExpressionCog(commands.Cog):
     @commands.guild_only()
     async def copy(self, ctx: commands.Context, *args):
         if not isinstance(ctx.author, discord.Member) or not has_expr_perm(ctx.author):
-            await ctx.reply("Necesitas el permiso de 'Gestionar Expresiones'.", mention_author=False)
+            await ctx.reply(translate(ctx, "expression.permission"), mention_author=False)
             return
 
         if ctx.message.reference:
@@ -240,12 +236,12 @@ class ExpressionCog(commands.Cog):
                     discord.StickerFormatType.png,
                     discord.StickerFormatType.apng,
                 ) and not st.url.lower().endswith(".gif"):
-                    await ctx.reply("Solo puedo copiar stickers PNG, APNG o GIF.", mention_author=False)
+                    await ctx.reply(translate(ctx, "expression.sticker_format"), mention_author=False)
                     return
 
                 data = await self._fetch_bytes(str(st.url))
                 if not data:
-                    await ctx.reply("No pude descargar el sticker.", mention_author=False)
+                    await ctx.reply(translate(ctx, "expression.download_sticker"), mention_author=False)
                     return
 
                 name = sanitize(custom_name or st.name, max_len=30, prefix="stk")
@@ -264,14 +260,26 @@ class ExpressionCog(commands.Cog):
                     )
                     note = " 🛠️" if compressed else ""
                     await ref.reply(
-                        f"Sticker `{sticker.name}` agregado al servidor ✅{note}", mention_author=False
+                        translate(
+                            ctx,
+                            "expression.added_sticker",
+                            name=sticker.name,
+                            note=note,
+                        ),
+                        mention_author=False,
                     )
                 except ValueError as e:
-                    await ctx.reply(str(e), mention_author=False)
+                    await ctx.reply(describe_processing_error(ctx, e), mention_author=False)
                 except discord.HTTPException as e:
-                    await ctx.reply(describe_expression_upload_error(e, "sticker"), mention_author=False)
+                    await ctx.reply(
+                        describe_expression_upload_error(ctx, e, "sticker"),
+                        mention_author=False,
+                    )
                 except Exception as e:
-                    await ctx.reply(f"Error: {e}", mention_author=False)
+                    await ctx.reply(
+                        translate(ctx, "expression.error", error=e),
+                        mention_author=False,
+                    )
                 return
 
             tag = TAG_REGEX.search(ref.content)
@@ -283,89 +291,119 @@ class ExpressionCog(commands.Cog):
                 url = f"https://cdn.discordapp.com/emojis/{eid}.{'gif' if animated else 'png'}"
                 data = await self._fetch_bytes(url)
                 if not data:
-                    await ctx.reply("No pude descargar el emoji.", mention_author=False)
+                    await ctx.reply(translate(ctx, "expression.download_emoji"), mention_author=False)
                     return
 
                 name = sanitize(custom_name or orig_name)
                 try:
                     emoji = await ctx.guild.create_custom_emoji(name=name, image=data)
-                    await ref.reply(f"Emoji {emoji} (`{name}`) agregado al servidor ✅", mention_author=False)
+                    await ref.reply(
+                        translate(
+                            ctx,
+                            "expression.added_emoji",
+                            emoji=emoji,
+                            name=name,
+                            note="",
+                        ),
+                        mention_author=False,
+                    )
                 except discord.HTTPException as e:
-                    await ctx.reply(describe_expression_upload_error(e, "emoji"), mention_author=False)
+                    await ctx.reply(
+                        describe_expression_upload_error(ctx, e, "emoji"),
+                        mention_author=False,
+                    )
                 except Exception as e:
-                    await ctx.reply(f"Error: {e}", mention_author=False)
+                    await ctx.reply(
+                        translate(ctx, "expression.error", error=e),
+                        mention_author=False,
+                    )
                 return
 
             if get_image_attachment(ref):
-                await ctx.reply(IMAGE_COPY_HELP, mention_author=False)
+                await ctx.reply(translate(ctx, "expression.image_copy_help"), mention_author=False)
                 return
 
-            await ctx.reply("No encontré sticker ni emoji en ese mensaje.", mention_author=False)
+            await ctx.reply(translate(ctx, "expression.no_expression"), mention_author=False)
             return
 
         if not args:
-            await ctx.reply(
-                "Responde a un mensaje o pon un emoji personalizado para copiar.", mention_author=False
-            )
+            await ctx.reply(translate(ctx, "expression.reply_or_emoji"), mention_author=False)
             return
 
         parsed = parse_custom_emoji(args[0])
         if not parsed:
-            await ctx.reply(
-                "El primer argumento debe ser un emoji personalizado válido.", mention_author=False
-            )
+            await ctx.reply(translate(ctx, "expression.emoji_invalid"), mention_author=False)
             return
 
         animated, orig_name, eid = parsed
         url = f"https://cdn.discordapp.com/emojis/{eid}.{'gif' if animated else 'png'}"
         data = await self._fetch_bytes(url)
         if not data:
-            await ctx.reply("No pude descargar el emoji.", mention_author=False)
+            await ctx.reply(translate(ctx, "expression.download_emoji"), mention_author=False)
             return
 
         name = sanitize(clean_name_tokens(args[1:]) or orig_name)
         try:
             emoji = await ctx.guild.create_custom_emoji(name=name, image=data)
-            await ctx.reply(f"Emoji {emoji} (`{name}`) agregado al servidor ✅", mention_author=False)
+            await ctx.reply(
+                translate(
+                    ctx,
+                    "expression.added_emoji",
+                    emoji=emoji,
+                    name=name,
+                    note="",
+                ),
+                mention_author=False,
+            )
         except discord.HTTPException as e:
-            await ctx.reply(describe_expression_upload_error(e, "emoji"), mention_author=False)
+            await ctx.reply(
+                describe_expression_upload_error(ctx, e, "emoji"),
+                mention_author=False,
+            )
         except Exception as e:
-            await ctx.reply(f"Error: {e}", mention_author=False)
+            await ctx.reply(translate(ctx, "expression.error", error=e), mention_author=False)
 
     @commands.command(aliases=["emojis"])
     @commands.guild_only()
     async def emoji(self, ctx: commands.Context, *, nombre: str | None = None):
         """Sube un archivo adjunto (PNG, GIF, JPG) como un emoji."""
         if not isinstance(ctx.author, discord.Member) or not has_expr_perm(ctx.author):
-            await ctx.reply("Necesitas el permiso de 'Gestionar Expresiones'.", mention_author=False)
+            await ctx.reply(translate(ctx, "expression.permission"), mention_author=False)
             return
 
         if not ctx.message.reference:
-            await ctx.reply(EMOJI_USAGE_HELP, mention_author=False)
+            await ctx.reply(translate(ctx, "expression.emoji_usage"), mention_author=False)
             return
 
         ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
         if ref.stickers:
-            await ctx.reply(STICKER_COPY_HELP, mention_author=False)
+            await ctx.reply(translate(ctx, "expression.sticker_copy_help"), mention_author=False)
             return
         if TAG_REGEX.search(ref.content):
-            await ctx.reply(EMOJI_COPY_HELP, mention_author=False)
+            await ctx.reply(translate(ctx, "expression.emoji_copy_help"), mention_author=False)
             return
 
         if not ref.attachments:
-            await ctx.reply(NO_EXPRESSION_HELP, mention_author=False)
+            await ctx.reply(translate(ctx, "expression.no_expression_copy"), mention_author=False)
             return
 
         att = ref.attachments[0]
         allowed_formats = (".png", ".apng", ".gif", ".jpg", ".jpeg", ".webp")
         if not att.filename.lower().endswith(allowed_formats):
-            await ctx.reply(f"Formato no soportado. Usa {', '.join(allowed_formats)}.", mention_author=False)
+            await ctx.reply(
+                translate(
+                    ctx,
+                    "expression.unsupported_format",
+                    formats=", ".join(allowed_formats),
+                ),
+                mention_author=False,
+            )
             return
 
         try:
             data = await self._read_attachment(att)
         except ValueError as exc:
-            await ctx.reply(str(exc), mention_author=False)
+            await ctx.reply(describe_processing_error(ctx, exc), mention_author=False)
             return
         base_name = os.path.splitext(att.filename)[0]
         new_name = sanitize(nombre or base_name)
@@ -379,49 +417,69 @@ class ExpressionCog(commands.Cog):
             new_emoji = await ctx.guild.create_custom_emoji(name=new_name, image=data)
             note = " 🛠️" if compressed else ""
             await ref.reply(
-                f"Emoji {new_emoji} (`{new_name}`) agregado al servidor ✅{note}", mention_author=False
+                translate(
+                    ctx,
+                    "expression.added_emoji",
+                    emoji=new_emoji,
+                    name=new_name,
+                    note=note,
+                ),
+                mention_author=False,
             )
         except ValueError as e:
-            await ctx.reply(str(e), mention_author=False)
+            await ctx.reply(describe_processing_error(ctx, e), mention_author=False)
         except discord.HTTPException as e:
-            await ctx.reply(describe_expression_upload_error(e, "emoji"), mention_author=False)
-        except Exception as e:
-            await ctx.reply(f"No se pudo subir el emoji: {e}", mention_author=False)
+            await ctx.reply(
+                describe_expression_upload_error(ctx, e, "emoji"),
+                mention_author=False,
+            )
+        except Exception:
+            await ctx.reply(
+                translate(ctx, "expression.upload_failed", kind="emoji"),
+                mention_author=False,
+            )
 
     @commands.command(aliases=["stickers", "stk"])
     @commands.guild_only()
     async def sticker(self, ctx: commands.Context, *, nombre: str | None = None):
         """Sube un archivo adjunto como sticker (convierte JPG a PNG si es necesario)."""
         if not isinstance(ctx.author, discord.Member) or not has_expr_perm(ctx.author):
-            await ctx.reply("Necesitas el permiso de 'Gestionar Expresiones'.", mention_author=False)
+            await ctx.reply(translate(ctx, "expression.permission"), mention_author=False)
             return
 
         if not ctx.message.reference:
-            await ctx.reply(STICKER_USAGE_HELP, mention_author=False)
+            await ctx.reply(translate(ctx, "expression.sticker_usage"), mention_author=False)
             return
 
         ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
         if ref.stickers:
-            await ctx.reply(STICKER_COPY_HELP, mention_author=False)
+            await ctx.reply(translate(ctx, "expression.sticker_copy_help"), mention_author=False)
             return
         if TAG_REGEX.search(ref.content):
-            await ctx.reply(EMOJI_COPY_HELP, mention_author=False)
+            await ctx.reply(translate(ctx, "expression.emoji_copy_help"), mention_author=False)
             return
 
         if not ref.attachments:
-            await ctx.reply(NO_EXPRESSION_HELP, mention_author=False)
+            await ctx.reply(translate(ctx, "expression.no_expression_copy"), mention_author=False)
             return
 
         att = ref.attachments[0]
         allowed_formats = (".png", ".apng", ".gif", ".jpg", ".jpeg", ".webp")
         if not att.filename.lower().endswith(allowed_formats):
-            await ctx.reply(f"Formato no soportado. Usa {', '.join(allowed_formats)}.", mention_author=False)
+            await ctx.reply(
+                translate(
+                    ctx,
+                    "expression.unsupported_format",
+                    formats=", ".join(allowed_formats),
+                ),
+                mention_author=False,
+            )
             return
 
         try:
             data = await self._read_attachment(att)
         except ValueError as exc:
-            await ctx.reply(str(exc), mention_author=False)
+            await ctx.reply(describe_processing_error(ctx, exc), mention_author=False)
             return
         base_name = os.path.splitext(att.filename)[0]
         new_name = sanitize(nombre or base_name, max_len=30, prefix="stk")
@@ -441,14 +499,26 @@ class ExpressionCog(commands.Cog):
             )
             note = " 🛠️" if compressed else ""
             await ref.reply(
-                f"Sticker `{new_sticker.name}` agregado al servidor ✅{note}", mention_author=False
+                translate(
+                    ctx,
+                    "expression.added_sticker",
+                    name=new_sticker.name,
+                    note=note,
+                ),
+                mention_author=False,
             )
         except ValueError as e:
-            await ctx.reply(str(e), mention_author=False)
+            await ctx.reply(describe_processing_error(ctx, e), mention_author=False)
         except discord.HTTPException as e:
-            await ctx.reply(describe_expression_upload_error(e, "sticker"), mention_author=False)
-        except Exception as e:
-            await ctx.reply(f"No se pudo subir el sticker: {e}", mention_author=False)
+            await ctx.reply(
+                describe_expression_upload_error(ctx, e, "sticker"),
+                mention_author=False,
+            )
+        except Exception:
+            await ctx.reply(
+                translate(ctx, "expression.upload_failed", kind="sticker"),
+                mention_author=False,
+            )
 
     # ---- NUEVO COMANDO 'GET' ----
     @commands.command(name="get", aliases=["robar", "extract"])
@@ -456,10 +526,7 @@ class ExpressionCog(commands.Cog):
     async def get_expression(self, ctx: commands.Context):
         """Envía la imagen de un sticker o emoji de un mensaje respondido."""
         if not ctx.message.reference:
-            await ctx.reply(
-                "Debes responder a un mensaje que contenga un sticker o emoji personalizado.",
-                mention_author=False,
-            )
+            await ctx.reply(translate(ctx, "expression.get_missing"), mention_author=False)
             return
 
         ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
@@ -475,7 +542,10 @@ class ExpressionCog(commands.Cog):
             if data:
                 await ctx.reply(file=discord.File(io.BytesIO(data), filename=filename), mention_author=False)
             else:
-                await ctx.reply("No pude descargar la imagen del sticker.", mention_author=False)
+                await ctx.reply(
+                    translate(ctx, "expression.download_sticker_image"),
+                    mention_author=False,
+                )
             return
 
         # Si no hay sticker, buscamos un emoji
@@ -483,7 +553,7 @@ class ExpressionCog(commands.Cog):
         if tag:
             parsed = parse_custom_emoji(tag.group())
             if not parsed:
-                await ctx.reply("No pude identificar el emoji personalizado.", mention_author=False)
+                await ctx.reply(translate(ctx, "expression.emoji_invalid"), mention_author=False)
                 return
 
             animated, name, eid = parsed
@@ -495,12 +565,13 @@ class ExpressionCog(commands.Cog):
             if data:
                 await ctx.reply(file=discord.File(io.BytesIO(data), filename=filename), mention_author=False)
             else:
-                await ctx.reply("No pude descargar la imagen del emoji.", mention_author=False)
+                await ctx.reply(
+                    translate(ctx, "expression.download_emoji_image"),
+                    mention_author=False,
+                )
             return
 
-        await ctx.reply(
-            "No encontré ningún sticker o emoji personalizado en el mensaje respondido.", mention_author=False
-        )
+        await ctx.reply(translate(ctx, "expression.no_expression_get"), mention_author=False)
 
 
 async def setup(bot: commands.Bot):

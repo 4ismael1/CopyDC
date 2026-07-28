@@ -22,26 +22,34 @@ from database import (
     set_vanity_settings,
     setup_vanity_table,
 )
+from localization import get_language, translate, translate_language
 
 log = logging.getLogger("bot")
 
 
-class EmbedEditorModal(ui.Modal, title="✏️ Editar Embed"):
+class EmbedEditorModal(ui.Modal):
     """Modal para editar el embed."""
 
-    def __init__(self, embed_type: str, current_title: str, current_desc: str, current_color: int):
-        super().__init__()
+    def __init__(
+        self,
+        embed_type: str,
+        current_title: str,
+        current_desc: str,
+        current_color: int,
+        language: str,
+    ):
+        super().__init__(title=translate_language(language, "common.embed_editor_title"))
         self.embed_type = embed_type
 
         self.title_input = ui.TextInput(
-            label="Título",
+            label=translate_language(language, "common.embed_title"),
             default=current_title,
             max_length=256,
             required=True,
-            placeholder="Ejemplo: ¡Gracias por representarnos!",
+            placeholder=translate_language(language, "vanity.default_add_title"),
         )
         self.desc_input = ui.TextInput(
-            label="Descripción",
+            label=translate_language(language, "common.embed_description"),
             style=discord.TextStyle.paragraph,
             default=current_desc,
             max_length=2000,
@@ -49,11 +57,11 @@ class EmbedEditorModal(ui.Modal, title="✏️ Editar Embed"):
             placeholder="Variables: {user} {role} {vanity} {server}",
         )
         self.color_input = ui.TextInput(
-            label="Color HEX (sin #)",
+            label=translate_language(language, "common.embed_color"),
             default=format(current_color, "x"),
             max_length=6,
             required=True,
-            placeholder="57F287=verde, ED4245=rojo, 5865F2=azul",
+            placeholder=translate_language(language, "common.embed_color_placeholder"),
         )
 
         self.add_item(self.title_input)
@@ -163,19 +171,31 @@ class VanityCog(commands.Cog):
     ) -> discord.Embed:
         """Construye el embed personalizado."""
         if is_add:
-            title = settings.get("embed_title", "✨ ¡Gracias por representarnos!")
-            desc = settings.get(
-                "embed_description", "{user} ahora tiene **{vanity}** en su estado y recibió {role}"
+            title = settings.get("embed_title") or translate(member, "vanity.default_add_title")
+            desc = settings.get("embed_description") or translate(
+                member,
+                "vanity.default_add_description",
+                user="{user}",
+                vanity="{vanity}",
+                role="{role}",
             )
             color = settings.get("embed_color", 0x57F287)
         else:
-            title = settings.get("remove_title", "👋 Vanity Removida")
-            desc = settings.get("remove_description", "{user} quitó **{vanity}** de su estado")
+            title = settings.get("remove_title") or translate(member, "vanity.default_remove_title")
+            desc = settings.get("remove_description") or translate(
+                member,
+                "vanity.default_remove_description",
+                user="{user}",
+                vanity="{vanity}",
+            )
             color = settings.get("remove_color", 0xED4245)
 
         # Reemplazar variables
         desc = desc.replace("{user}", member.mention)
-        desc = desc.replace("{role}", role.mention if role else "rol")
+        desc = desc.replace(
+            "{role}",
+            role.mention if role else translate(member, "clantag.role_field").lower(),
+        )
         desc = desc.replace("{vanity}", vanity)
         desc = desc.replace("{server}", member.guild.name)
 
@@ -295,12 +315,14 @@ class VanityCog(commands.Cog):
         settings = self._get_settings_cached(ctx.guild.id)
         vanity_codes = self._get_codes_cached(ctx.guild.id)
 
-        embed = discord.Embed(title="🔗 Sistema de Vanity Roles", color=0x5865F2)
+        embed = discord.Embed(title=translate(ctx, "vanity.panel_title"), color=0x5865F2)
 
         # Canal de añadir
         channel = ctx.guild.get_channel(settings.get("channel_id")) if settings.get("channel_id") else None
         embed.add_field(
-            name="📢 Canal (Añadir)", value=channel.mention if channel else "`No configurado`", inline=True
+            name=translate(ctx, "vanity.channel_add_field"),
+            value=channel.mention if channel else translate(ctx, "common.not_configured_code"),
+            inline=True,
         )
 
         # Canal de removido
@@ -310,39 +332,42 @@ class VanityCog(commands.Cog):
             else None
         )
         remove_enabled = settings.get("remove_enabled", 0)
-        remove_status = f"{remove_channel.mention}" if remove_channel else "`No configurado`"
+        remove_status = (
+            f"{remove_channel.mention}" if remove_channel else translate(ctx, "common.not_configured_code")
+        )
         if not remove_enabled:
-            remove_status = f"~~{remove_status}~~ (desactivado)"
-        embed.add_field(name="📤 Canal (Removido)", value=remove_status, inline=True)
+            remove_status = f"~~{remove_status}~~ ({translate(ctx, 'common.disabled')})"
+        embed.add_field(
+            name=translate(ctx, "vanity.channel_remove_field"),
+            value=remove_status,
+            inline=True,
+        )
 
         # Cantidad de vanitys
-        embed.add_field(name="🏷️ Vanitys Activas", value=f"`{len(vanity_codes)}`", inline=True)
+        embed.add_field(
+            name=translate(ctx, "vanity.active_field"),
+            value=f"`{len(vanity_codes)}`",
+            inline=True,
+        )
 
         # Lista de vanitys
         if vanity_codes:
             vanity_list = []
             for vc in vanity_codes[:10]:  # Máximo 10
                 role = ctx.guild.get_role(vc["role_id"])
-                role_text = role.mention if role else "❌ Rol eliminado"
+                role_text = role.mention if role else translate(ctx, "common.role_deleted")
                 vanity_list.append(f"• `{vc['vanity_code']}` → {role_text}")
 
             embed.add_field(
-                name="📋 Lista de Vanitys", value="\n".join(vanity_list) or "Ninguna", inline=False
+                name=translate(ctx, "vanity.list_field"),
+                value="\n".join(vanity_list) or translate(ctx, "common.none"),
+                inline=False,
             )
 
         # Comandos
         embed.add_field(
-            name="⚙️ Comandos",
-            value=(
-                "`c!vanity add <código> @rol` — Añadir vanity\n"
-                "`c!vanity remove <código>` — Quitar vanity\n"
-                "`c!vanity channel #canal` — Canal (añadir)\n"
-                "`c!vanity removechannel #canal` — Canal (removido)\n"
-                "`c!vanity removenotify` — Toggle removido\n"
-                "`c!vanity list` — Ver usuarios\n"
-                "`c!vanity embed` — Personalizar embeds\n"
-                "`c!vanity reset` — Borrar todo"
-            ),
+            name=translate(ctx, "common.commands"),
+            value=translate(ctx, "vanity.commands_value"),
             inline=False,
         )
 
@@ -354,9 +379,7 @@ class VanityCog(commands.Cog):
         """Añade una vanity y su rol."""
         me = ctx.guild.me
         if rol.is_default() or rol.managed or (me is not None and rol >= me.top_role):
-            await ctx.send(
-                "❌ No puedo administrar ese rol. Usa un rol normal situado debajo del rol del bot."
-            )
+            await ctx.send(translate(ctx, "common.role_unmanageable"))
             return
 
         # Asegurar que exista settings
@@ -367,13 +390,18 @@ class VanityCog(commands.Cog):
         if add_vanity_code(ctx.guild.id, codigo.lower(), rol.id):
             self._refresh_guild_cache(ctx.guild.id)
             embed = discord.Embed(
-                title="✅ Vanity Añadida",
-                description=f"**Código:** `{codigo}`\n**Rol:** {rol.mention}",
+                title=translate(ctx, "vanity.add_title"),
+                description=translate(
+                    ctx,
+                    "vanity.add_description",
+                    code=codigo,
+                    role=rol.mention,
+                ),
                 color=0x57F287,
             )
             await ctx.send(embed=embed)
         else:
-            await ctx.send(f"❌ La vanity `{codigo}` ya existe.")
+            await ctx.send(translate(ctx, "vanity.duplicate", code=codigo))
 
     @vanity.command(name="remove", aliases=["delete", "del"])
     @commands.has_permissions(administrator=True)
@@ -381,9 +409,9 @@ class VanityCog(commands.Cog):
         """Elimina una vanity."""
         if remove_vanity_code(ctx.guild.id, codigo.lower()):
             self._refresh_guild_cache(ctx.guild.id)
-            await ctx.send(f"✅ Vanity `{codigo}` eliminada.")
+            await ctx.send(translate(ctx, "vanity.removed", code=codigo))
         else:
-            await ctx.send(f"❌ No existe la vanity `{codigo}`.")
+            await ctx.send(translate(ctx, "vanity.not_found", code=codigo))
 
     @vanity.command(name="channel", aliases=["canal"])
     @commands.has_permissions(administrator=True)
@@ -393,9 +421,9 @@ class VanityCog(commands.Cog):
         self._refresh_guild_cache(ctx.guild.id)
 
         if canal:
-            await ctx.send(f"✅ Canal de notificaciones (añadir) configurado: {canal.mention}")
+            await ctx.send(translate(ctx, "common.channel_add_set", channel=canal.mention))
         else:
-            await ctx.send("✅ Canal de notificaciones (añadir) desactivado.")
+            await ctx.send(translate(ctx, "common.channel_add_disabled"))
 
     @vanity.command(name="removechannel", aliases=["removecanal"])
     @commands.has_permissions(administrator=True)
@@ -405,9 +433,9 @@ class VanityCog(commands.Cog):
         self._refresh_guild_cache(ctx.guild.id)
 
         if canal:
-            await ctx.send(f"✅ Canal de notificaciones (removido) configurado: {canal.mention}")
+            await ctx.send(translate(ctx, "common.channel_remove_set", channel=canal.mention))
         else:
-            await ctx.send("✅ Canal de notificaciones (removido) desactivado.")
+            await ctx.send(translate(ctx, "common.channel_remove_disabled"))
 
     @vanity.command(name="removenotify", aliases=["removenotificacion"])
     @commands.has_permissions(administrator=True)
@@ -421,9 +449,9 @@ class VanityCog(commands.Cog):
         self._refresh_guild_cache(ctx.guild.id)
 
         if new_value:
-            await ctx.send("✅ Notificaciones de removido **activadas**.")
+            await ctx.send(translate(ctx, "common.remove_notifications_enabled"))
         else:
-            await ctx.send("✅ Notificaciones de removido **desactivadas**.")
+            await ctx.send(translate(ctx, "common.remove_notifications_disabled"))
 
     @vanity.command(name="list", aliases=["users", "lista"])
     @commands.has_permissions(administrator=True)
@@ -432,10 +460,10 @@ class VanityCog(commands.Cog):
         vanity_codes = self._get_codes_cached(ctx.guild.id)
 
         if not vanity_codes:
-            await ctx.send("❌ No hay vanitys configuradas.")
+            await ctx.send(translate(ctx, "vanity.list_none"))
             return
 
-        msg = await ctx.send("🔄 Buscando usuarios...")
+        msg = await ctx.send(translate(ctx, "vanity.list_searching"))
 
         results = {}
         for vc in vanity_codes:
@@ -449,7 +477,7 @@ class VanityCog(commands.Cog):
                     results[vc["vanity_code"]].append(member)
                     break
 
-        embed = discord.Embed(title="👥 Usuarios con Vanity", color=0x5865F2)
+        embed = discord.Embed(title=translate(ctx, "vanity.list_title"), color=0x5865F2)
 
         total = 0
         visible_results = list(results.items())[:24]
@@ -458,16 +486,26 @@ class VanityCog(commands.Cog):
             if members:
                 member_list = ", ".join([m.mention for m in members[:15]])
                 if len(members) > 15:
-                    member_list += f" y {len(members) - 15} más..."
+                    member_list += translate(
+                        ctx,
+                        "vanity.list_more",
+                        count=len(members) - 15,
+                    )
             else:
-                member_list = "*Ninguno*"
+                member_list = f"*{translate(ctx, 'common.none')}*"
 
             embed.add_field(name=f"🔗 {vanity} ({len(members)})", value=member_list, inline=False)
 
-        embed.set_footer(text=f"Total: {total} usuarios")
+        embed.set_footer(text=translate(ctx, "common.total_users", count=total))
         if len(results) > len(visible_results):
             embed.set_footer(
-                text=f"Total: {total} usuarios · Mostrando {len(visible_results)} de {len(results)} vanitys"
+                text=translate(
+                    ctx,
+                    "vanity.list_total_limited",
+                    total=total,
+                    visible=len(visible_results),
+                    count=len(results),
+                )
             )
         await msg.edit(content=None, embed=embed)
 
@@ -487,16 +525,26 @@ class VanityCog(commands.Cog):
                 )
                 self.cog = cog
                 self.settings = settings
+                language = get_language(ctx)
+                self.edit_add.label = translate_language(language, "common.embed_add_button")
+                self.edit_remove.label = translate_language(language, "common.embed_remove_button")
+                self.preview.label = translate_language(language, "common.embed_preview_button")
 
             @ui.button(label="✅ Embed de Añadido", style=discord.ButtonStyle.success)
             async def edit_add(self, interaction: discord.Interaction, button: ui.Button):
                 modal = EmbedEditorModal(
                     "add",
-                    self.settings.get("embed_title", "✨ ¡Gracias por representarnos!"),
-                    self.settings.get(
-                        "embed_description", "{user} ahora tiene **{vanity}** en su estado y recibió {role}"
+                    self.settings.get("embed_title") or translate(interaction, "vanity.default_add_title"),
+                    self.settings.get("embed_description")
+                    or translate(
+                        interaction,
+                        "vanity.default_add_description",
+                        user="{user}",
+                        vanity="{vanity}",
+                        role="{role}",
                     ),
                     self.settings.get("embed_color", 0x57F287),
+                    get_language(interaction),
                 )
                 await interaction.response.send_modal(modal)
                 await modal.wait()
@@ -510,17 +558,26 @@ class VanityCog(commands.Cog):
                     )
                     self.cog._refresh_guild_cache(ctx.guild.id)
                     self.settings = self.cog._get_settings_cached(ctx.guild.id)
-                    await interaction.followup.send("✅ Embed de añadido actualizado.", ephemeral=True)
+                    await interaction.followup.send(
+                        translate(interaction, "common.embed_add_updated"),
+                        ephemeral=True,
+                    )
 
             @ui.button(label="❌ Embed de Removido", style=discord.ButtonStyle.danger)
             async def edit_remove(self, interaction: discord.Interaction, button: ui.Button):
                 modal = EmbedEditorModal(
                     "remove",
-                    self.settings.get("remove_title", "😢 Vanity removida"),
-                    self.settings.get(
-                        "remove_description", "{user} ha quitado **{vanity}** de su estado y perdió {role}"
+                    self.settings.get("remove_title")
+                    or translate(interaction, "vanity.default_remove_title"),
+                    self.settings.get("remove_description")
+                    or translate(
+                        interaction,
+                        "vanity.default_remove_description",
+                        user="{user}",
+                        vanity="{vanity}",
                     ),
                     self.settings.get("remove_color", 0xED4245),
+                    get_language(interaction),
                 )
                 await interaction.response.send_modal(modal)
                 await modal.wait()
@@ -534,7 +591,10 @@ class VanityCog(commands.Cog):
                     )
                     self.cog._refresh_guild_cache(ctx.guild.id)
                     self.settings = self.cog._get_settings_cached(ctx.guild.id)
-                    await interaction.followup.send("✅ Embed de removido actualizado.", ephemeral=True)
+                    await interaction.followup.send(
+                        translate(interaction, "common.embed_remove_updated"),
+                        ephemeral=True,
+                    )
 
             @ui.button(label="👁️ Vista Previa", style=discord.ButtonStyle.secondary)
             async def preview(self, interaction: discord.Interaction, button: ui.Button):
@@ -549,26 +609,14 @@ class VanityCog(commands.Cog):
                 )
 
                 await interaction.response.send_message(
-                    "**Vista previa de los embeds:**", embeds=[embed_add, embed_remove], ephemeral=True
+                    f"**{translate(interaction, 'common.embed_preview')}**",
+                    embeds=[embed_add, embed_remove],
+                    ephemeral=True,
                 )
 
         embed = discord.Embed(
-            title="✏️ Editor de Embeds",
-            description=(
-                "Personaliza los mensajes de notificación.\n\n"
-                "**Variables:**\n"
-                "`{user}` → Mención del usuario\n"
-                "`{role}` → Mención del rol\n"
-                "`{vanity}` → Código de la vanity\n"
-                "`{server}` → Nombre del servidor\n\n"
-                "**Formato de texto:**\n"
-                "`**texto**` → **negrita**\n"
-                "`*texto*` → *cursiva*\n"
-                "`__texto__` → subrayado\n\n"
-                "**Emojis del servidor:**\n"
-                "Solo escribe `:nombre:` y se convierte automático\n"
-                "Ejemplo: `:star:` → ⭐"
-            ),
+            title=translate(ctx, "vanity.editor_title"),
+            description=translate(ctx, "vanity.editor_description"),
             color=0x5865F2,
         )
 
@@ -581,8 +629,8 @@ class VanityCog(commands.Cog):
         """Elimina toda la configuración de vanity."""
         # Confirmación
         embed = discord.Embed(
-            title="⚠️ ¿Estás seguro?",
-            description="Esto eliminará **todas** las vanitys y configuración.",
+            title=translate(ctx, "vanity.reset_title"),
+            description=translate(ctx, "vanity.reset_description"),
             color=0xFEE75C,
         )
 
@@ -594,6 +642,8 @@ class VanityCog(commands.Cog):
                     required_permissions=("administrator",),
                 )
                 self.confirmed = False
+                self.confirm.label = translate(ctx, "vanity.reset_confirm")
+                self.cancel.label = translate(ctx, "common.cancel")
 
             @ui.button(label="Sí, eliminar", style=discord.ButtonStyle.danger)
             async def confirm(self, interaction: discord.Interaction, button: ui.Button):
@@ -613,12 +663,12 @@ class VanityCog(commands.Cog):
         if view.confirmed:
             delete_all_vanity(ctx.guild.id)
             self._invalidate_guild_cache(ctx.guild.id)
-            embed.title = "✅ Configuración Eliminada"
-            embed.description = "Toda la configuración de vanity ha sido borrada."
+            embed.title = translate(ctx, "common.configuration_deleted")
+            embed.description = translate(ctx, "vanity.reset_done")
             embed.color = 0x57F287
         else:
-            embed.title = "❌ Cancelado"
-            embed.description = "No se eliminó nada."
+            embed.title = translate(ctx, "common.cancelled")
+            embed.description = translate(ctx, "vanity.reset_cancelled")
             embed.color = 0xED4245
 
         await msg.edit(embed=embed, view=None)

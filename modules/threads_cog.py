@@ -10,6 +10,7 @@ from discord.ext import commands
 
 import database as db
 from command_utils import send_response
+from localization import translate
 
 log = logging.getLogger("bot")
 ThreadMode = Literal["all", "media", "text"]
@@ -60,7 +61,7 @@ class ThreadsCog(commands.Cog):
     async def thread(self, ctx: commands.Context):
         await send_response(
             ctx,
-            "Usa `c!thread add`, `!thread add` o `/thread add`. Tambien tienes `remove`, `list` y `panel`.",
+            translate(ctx, "threads.help"),
             mention_author=False,
             ephemeral=True,
         )
@@ -76,7 +77,7 @@ class ThreadsCog(commands.Cog):
         )
         await send_response(
             ctx,
-            f"Hilos automaticos activados en {channel.mention} con modo **{mode}**.",
+            translate(ctx, "threads.added", channel=channel.mention, mode=mode),
             mention_author=False,
         )
 
@@ -88,7 +89,7 @@ class ThreadsCog(commands.Cog):
         self._set_channel_cache(channel.id, None)
         await send_response(
             ctx,
-            f"Hilos automaticos desactivados en {channel.mention}.",
+            translate(ctx, "threads.removed", channel=channel.mention),
             mention_author=False,
         )
 
@@ -99,18 +100,18 @@ class ThreadsCog(commands.Cog):
         if not configs:
             await send_response(
                 ctx,
-                "No hay canales configurados para hilos automaticos en este servidor.",
+                translate(ctx, "threads.none"),
                 mention_author=False,
                 ephemeral=True,
             )
             return
 
-        embed = discord.Embed(title="Configuracion de hilos automaticos", color=0x3498DB)
+        embed = discord.Embed(title=translate(ctx, "threads.list_title"), color=0x3498DB)
         lines = []
         for config in configs:
             channel = self.bot.get_channel(config["channel_id"])
             channel_text = channel.mention if channel else f"`{config['channel_id']}`"
-            lines.append(f"{channel_text} -> modo **{config['mode']}**")
+            lines.append(translate(ctx, "threads.list_item", channel=channel_text, mode=config["mode"]))
 
         embed.description = "\n".join(lines)
         await send_response(ctx, embed=embed, mention_author=False, ephemeral=True)
@@ -155,7 +156,10 @@ class ThreadsCog(commands.Cog):
                 return
 
             try:
-                await msg.create_thread(name="comments (auto)", auto_archive_duration=1440)
+                await msg.create_thread(
+                    name=translate(msg, "threads.thread_name"),
+                    auto_archive_duration=1440,
+                )
             except discord.NotFound:
                 # Carrera normal: alguien borro el mensaje antes del thread.
                 return

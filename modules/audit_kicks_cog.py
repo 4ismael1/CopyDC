@@ -3,6 +3,8 @@
 import discord
 from discord.ext import commands
 
+from localization import translate
+
 MAX_LIMIT = 25
 
 
@@ -40,18 +42,19 @@ class AuditKicksCog(commands.Cog):
             # En DM sólo el owner del bot puede usarlo (auditoría es sensible)
             if ctx.author.id != (self.bot.owner_id or 0):
                 return await ctx.reply(
-                    "❌ Este comando por DM sólo está permitido para el **owner del bot**.",
+                    translate(ctx, "audit.dm_owner_only"),
                     mention_author=False,
                 )
 
             # Necesita guild_id explícito
             if arg1 is None:
-                return await ctx.reply("ℹ️ En DM usa: `c!kicks <guild_id> [limite]`", mention_author=False)
+                return await ctx.reply(translate(ctx, "audit.dm_usage"), mention_author=False)
 
             guild_id = parse_int(arg1)
             if guild_id is None:
                 return await ctx.reply(
-                    "❌ `guild_id` inválido. Ej: `c!kicks 123456789012345678 10`", mention_author=False
+                    translate(ctx, "audit.guild_id_invalid"),
+                    mention_author=False,
                 )
 
             # Límite
@@ -60,7 +63,8 @@ class AuditKicksCog(commands.Cog):
                 lim = parse_int(arg2)
                 if lim is None or lim <= 0:
                     return await ctx.reply(
-                        "❌ Límite inválido. Usa un número entero positivo.", mention_author=False
+                        translate(ctx, "audit.limit_invalid"),
+                        mention_author=False,
                     )
                 limit = min(lim, MAX_LIMIT)
 
@@ -74,7 +78,8 @@ class AuditKicksCog(commands.Cog):
 
             if guild is None:
                 return await ctx.reply(
-                    "❌ No puedo acceder a ese servidor (¿el bot está dentro?).", mention_author=False
+                    translate(ctx, "audit.guild_unavailable"),
+                    mention_author=False,
                 )
 
         else:
@@ -82,7 +87,7 @@ class AuditKicksCog(commands.Cog):
             guild = ctx.guild
             if not isinstance(ctx.author, discord.Member):
                 return await ctx.reply(
-                    "❌ No pude verificar tus permisos en este servidor.",
+                    translate(ctx, "audit.permissions_unresolved"),
                     mention_author=False,
                 )
             requester_permissions = ctx.author.guild_permissions
@@ -92,7 +97,7 @@ class AuditKicksCog(commands.Cog):
                 or requester_permissions.view_audit_log
             ):
                 return await ctx.reply(
-                    "❌ Necesitas **Ver registro de auditoría** o **Gestionar servidor** para usar este comando.",
+                    translate(ctx, "audit.permission_required"),
                     mention_author=False,
                 )
 
@@ -101,18 +106,23 @@ class AuditKicksCog(commands.Cog):
                 lim = parse_int(arg1)
                 if lim is None or lim <= 0:
                     return await ctx.reply(
-                        "❌ Límite inválido. Usa un número entero positivo.", mention_author=False
+                        translate(ctx, "audit.limit_invalid"),
+                        mention_author=False,
                     )
                 limit = min(lim, MAX_LIMIT)
 
         # --- Verificar permisos del BOT en ese guild ---
         me = guild.me or guild.get_member(self.bot.user.id)
         if not me:
-            return await ctx.reply("❌ No pude verificar mis permisos en ese servidor.", mention_author=False)
+            return await ctx.reply(
+                translate(ctx, "audit.bot_permissions_unresolved"),
+                mention_author=False,
+            )
 
         if not me.guild_permissions.view_audit_log:
             return await ctx.reply(
-                "❌ No tengo permiso **Ver registro de auditoría** en ese servidor.", mention_author=False
+                translate(ctx, "audit.bot_permission_missing"),
+                mention_author=False,
             )
 
         # --- Leer auditoría ---
@@ -124,36 +134,39 @@ class AuditKicksCog(commands.Cog):
                 target = entry.target
                 moderator = entry.user
                 target_name = (
-                    f"{getattr(target, 'name', 'Desconocido')}#{getattr(target, 'discriminator', '0000')}"
+                    f"{getattr(target, 'name', translate(ctx, 'audit.unknown'))}#{getattr(target, 'discriminator', '0000')}"
                     if hasattr(target, "discriminator")
-                    else f"{getattr(target, 'name', 'Desconocido')}"
+                    else f"{getattr(target, 'name', translate(ctx, 'audit.unknown'))}"
                 )
                 mod_name = (
-                    f"{getattr(moderator, 'name', 'Desconocido')}#{getattr(moderator, 'discriminator', '0000')}"
+                    f"{getattr(moderator, 'name', translate(ctx, 'audit.unknown'))}#{getattr(moderator, 'discriminator', '0000')}"
                     if hasattr(moderator, "discriminator")
-                    else f"{getattr(moderator, 'name', 'Desconocido')}"
+                    else f"{getattr(moderator, 'name', translate(ctx, 'audit.unknown'))}"
                 )
                 when = entry.created_at  # UTC datetime
                 ts = int(when.timestamp()) if when else None
 
                 line = (
-                    f"👢 **Expulsado:** {target_name} (ID: {getattr(target, 'id', '¿?')})\n"
-                    f"🔨 **Moderador:** {mod_name} (ID: {getattr(moderator, 'id', '¿?')})"
+                    f"👢 **{translate(ctx, 'audit.target')}:** {target_name} "
+                    f"(ID: {getattr(target, 'id', '?')})\n"
+                    f"🔨 **{translate(ctx, 'audit.moderator')}:** {mod_name} "
+                    f"(ID: {getattr(moderator, 'id', '?')})"
                 )
                 if ts:
-                    line += f"\n🕒 **Fecha:** <t:{ts}:F> • <t:{ts}:R>"
+                    line += f"\n🕒 **{translate(ctx, 'audit.date')}:** <t:{ts}:F> • <t:{ts}:R>"
                 if entry.reason:
-                    line += f"\n📝 **Razón:** {entry.reason}"
+                    line += f"\n📝 **{translate(ctx, 'audit.reason')}:** {entry.reason}"
                 items.append(line)
         except discord.Forbidden:
-            return await ctx.reply("❌ Acceso denegado al registro de auditoría.", mention_author=False)
+            return await ctx.reply(translate(ctx, "audit.access_denied"), mention_author=False)
         except discord.HTTPException:
             return await ctx.reply(
-                "⚠️ Error al leer el registro de auditoría. Intenta de nuevo.", mention_author=False
+                translate(ctx, "audit.fetch_error"),
+                mention_author=False,
             )
 
         if not items:
-            return await ctx.reply("ℹ️ No hay expulsiones registradas (o no recientes).", mention_author=False)
+            return await ctx.reply(translate(ctx, "audit.none"), mention_author=False)
 
         # --- Construir Embed paginado sencillo (si es muy largo, lo dividimos en bloques) ---
         # Discord limita ~4096 chars en descripción. Partimos si hace falta.
@@ -170,9 +183,19 @@ class AuditKicksCog(commands.Cog):
 
         for i, chunk in enumerate(chunks, start=1):
             embed = discord.Embed(
-                title=f"Registro de expulsiones (kick) — {guild.name}", description=chunk, color=0x5865F2
+                title=translate(ctx, "audit.title", guild=guild.name),
+                description=chunk,
+                color=0x5865F2,
             )
-            embed.set_footer(text=f"Página {i}/{len(chunks)} • Límite solicitado: {limit}")
+            embed.set_footer(
+                text=translate(
+                    ctx,
+                    "audit.footer",
+                    page=i,
+                    pages=len(chunks),
+                    limit=limit,
+                )
+            )
             await ctx.reply(embed=embed, mention_author=False)
 
 

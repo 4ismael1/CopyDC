@@ -6,17 +6,20 @@ from discord.ext import commands
 
 from command_utils import RestrictedView
 from database import add_vanity_code, delete_all_vanity, remove_vanity_code, set_vanity_settings
+from localization import get_language, translate, translate_language
 from modules.vanity_cog import VanityCog
 
 
 class ConfirmResetView(RestrictedView):
-    def __init__(self, author_id: int):
+    def __init__(self, author_id: int, language: str):
         super().__init__(
             author_id=author_id,
             timeout=30,
             required_permissions=("administrator",),
         )
         self.confirmed = False
+        self.confirm.label = translate_language(language, "vanity.reset_confirm")
+        self.cancel.label = translate_language(language, "common.cancel")
 
     @discord.ui.button(label="Eliminar todo", style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, _: discord.ui.Button):
@@ -93,16 +96,16 @@ class VanitySlashCog(commands.Cog):
 
     async def _ensure_ready(self, interaction: discord.Interaction) -> VanityCog | None:
         if interaction.guild is None:
-            await self._send(interaction, "Este comando solo funciona dentro de un servidor.")
+            await self._send(interaction, translate(interaction, "common.server_only"))
             return None
 
         if not await self._is_admin_or_owner(interaction):
-            await self._send(interaction, "Necesitas **Administrador** para usar este comando.")
+            await self._send(interaction, translate(interaction, "common.admin_required"))
             return None
 
         cog = self._get_vanity_cog()
         if cog is None:
-            await self._send(interaction, "El modulo de vanity no esta cargado ahora mismo.")
+            await self._send(interaction, translate(interaction, "vanity.module_unavailable"))
             return None
 
         return cog
@@ -116,7 +119,7 @@ class VanitySlashCog(commands.Cog):
         settings = cog._get_settings_cached(interaction.guild.id)
         vanity_codes = cog._get_codes_cached(interaction.guild.id)
 
-        embed = discord.Embed(title="Sistema de Vanity Roles", color=0x5865F2)
+        embed = discord.Embed(title=translate(interaction, "vanity.panel_title"), color=0x5865F2)
 
         channel = (
             interaction.guild.get_channel(settings.get("channel_id")) if settings.get("channel_id") else None
@@ -127,32 +130,43 @@ class VanitySlashCog(commands.Cog):
             else None
         )
         remove_enabled = settings.get("remove_enabled", 0)
-        remove_status = remove_channel.mention if remove_channel else "`No configurado`"
+        remove_status = (
+            remove_channel.mention if remove_channel else translate(interaction, "common.not_configured_code")
+        )
         if not remove_enabled:
-            remove_status = f"~~{remove_status}~~ (desactivado)"
+            remove_status = f"~~{remove_status}~~ ({translate(interaction, 'common.disabled')})"
 
         embed.add_field(
-            name="Canal (anadir)", value=channel.mention if channel else "`No configurado`", inline=True
+            name=translate(interaction, "vanity.channel_add_field"),
+            value=channel.mention if channel else translate(interaction, "common.not_configured_code"),
+            inline=True,
         )
-        embed.add_field(name="Canal (removido)", value=remove_status, inline=True)
-        embed.add_field(name="Vanitys activas", value=f"`{len(vanity_codes)}`", inline=True)
+        embed.add_field(
+            name=translate(interaction, "vanity.channel_remove_field"),
+            value=remove_status,
+            inline=True,
+        )
+        embed.add_field(
+            name=translate(interaction, "vanity.active_field"),
+            value=f"`{len(vanity_codes)}`",
+            inline=True,
+        )
 
         if vanity_codes:
             lines = []
             for item in vanity_codes[:10]:
                 role = interaction.guild.get_role(item["role_id"])
-                role_text = role.mention if role else "Rol eliminado"
+                role_text = role.mention if role else translate(interaction, "common.role_deleted")
                 lines.append(f"- `{item['vanity_code']}` -> {role_text}")
-            embed.add_field(name="Lista de vanitys", value="\n".join(lines), inline=False)
+            embed.add_field(
+                name=translate(interaction, "vanity.list_field"),
+                value="\n".join(lines),
+                inline=False,
+            )
 
         embed.add_field(
-            name="Comandos",
-            value=(
-                "`/vanity add`  `/vanity remove`\n"
-                "`/vanity channel`  `/vanity removechannel`\n"
-                "`/vanity removenotify`  `/vanity list`  `/vanity reset`\n"
-                "Editor avanzado: `c!vanity embed` o `!vanity embed`"
-            ),
+            name=translate(interaction, "common.commands"),
+            value=translate(interaction, "vanity.commands_value"),
             inline=False,
         )
         await self._send(interaction, embed=embed)
@@ -168,7 +182,7 @@ class VanitySlashCog(commands.Cog):
         if rol.is_default() or rol.managed or (me is not None and rol >= me.top_role):
             await self._send(
                 interaction,
-                "No puedo administrar ese rol. Usa un rol normal situado debajo del rol del bot.",
+                translate(interaction, "common.role_unmanageable"),
             )
             return
 
@@ -179,14 +193,19 @@ class VanitySlashCog(commands.Cog):
         if add_vanity_code(interaction.guild.id, codigo.lower(), rol.id):
             cog._refresh_guild_cache(interaction.guild.id)
             embed = discord.Embed(
-                title="Vanity anadida",
-                description=f"**Codigo:** `{codigo}`\n**Rol:** {rol.mention}",
+                title=translate(interaction, "vanity.add_title"),
+                description=translate(
+                    interaction,
+                    "vanity.add_description",
+                    code=codigo,
+                    role=rol.mention,
+                ),
                 color=0x57F287,
             )
             await self._send(interaction, embed=embed, ephemeral=False)
             return
 
-        await self._send(interaction, f"La vanity `{codigo}` ya existe.")
+        await self._send(interaction, translate(interaction, "vanity.duplicate", code=codigo))
 
     @vanity.command(name="remove", description="Elimina una vanity configurada")
     @app_commands.describe(codigo="Codigo vanity que quieres eliminar")
@@ -197,10 +216,14 @@ class VanitySlashCog(commands.Cog):
 
         if remove_vanity_code(interaction.guild.id, codigo.lower()):
             cog._refresh_guild_cache(interaction.guild.id)
-            await self._send(interaction, f"Vanity `{codigo}` eliminada.", ephemeral=False)
+            await self._send(
+                interaction,
+                translate(interaction, "vanity.removed", code=codigo),
+                ephemeral=False,
+            )
             return
 
-        await self._send(interaction, f"No existe la vanity `{codigo}`.")
+        await self._send(interaction, translate(interaction, "vanity.not_found", code=codigo))
 
     @vanity.command(name="channel", description="Configura el canal de notificaciones de anadido")
     @app_commands.describe(canal="Canal donde se avisara cuando alguien anada la vanity")
@@ -214,9 +237,9 @@ class VanitySlashCog(commands.Cog):
         set_vanity_settings(interaction.guild.id, channel_id=canal.id if canal else None)
         cog._refresh_guild_cache(interaction.guild.id)
         message = (
-            f"Canal de notificaciones (anadir) configurado: {canal.mention}"
+            translate(interaction, "common.channel_add_set", channel=canal.mention)
             if canal
-            else "Canal de notificaciones (anadir) desactivado."
+            else translate(interaction, "common.channel_add_disabled")
         )
         await self._send(interaction, message, ephemeral=False)
 
@@ -232,9 +255,9 @@ class VanitySlashCog(commands.Cog):
         set_vanity_settings(interaction.guild.id, remove_channel_id=canal.id if canal else None)
         cog._refresh_guild_cache(interaction.guild.id)
         message = (
-            f"Canal de notificaciones (removido) configurado: {canal.mention}"
+            translate(interaction, "common.channel_remove_set", channel=canal.mention)
             if canal
-            else "Canal de notificaciones (removido) desactivado."
+            else translate(interaction, "common.channel_remove_disabled")
         )
         await self._send(interaction, message, ephemeral=False)
 
@@ -249,9 +272,9 @@ class VanitySlashCog(commands.Cog):
         set_vanity_settings(interaction.guild.id, remove_enabled=new_value)
         cog._refresh_guild_cache(interaction.guild.id)
         message = (
-            "Notificaciones de removido activadas."
+            translate(interaction, "common.remove_notifications_enabled")
             if new_value
-            else "Notificaciones de removido desactivadas."
+            else translate(interaction, "common.remove_notifications_disabled")
         )
         await self._send(interaction, message, ephemeral=False)
 
@@ -264,7 +287,10 @@ class VanitySlashCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         vanity_codes = cog._get_codes_cached(interaction.guild.id)
         if not vanity_codes:
-            await interaction.followup.send("No hay vanitys configuradas.", ephemeral=True)
+            await interaction.followup.send(
+                translate(interaction, "vanity.list_none"),
+                ephemeral=True,
+            )
             return
 
         results = {item["vanity_code"]: [] for item in vanity_codes}
@@ -276,16 +302,24 @@ class VanitySlashCog(commands.Cog):
                     results[item["vanity_code"]].append(member)
                     break
 
-        embed = discord.Embed(title="Usuarios con Vanity", color=0x5865F2)
+        embed = discord.Embed(title=translate(interaction, "vanity.list_title"), color=0x5865F2)
         total = 0
         for vanity, members in results.items():
             total += len(members)
-            member_list = ", ".join(member.mention for member in members[:15]) if members else "*Ninguno*"
+            member_list = (
+                ", ".join(member.mention for member in members[:15])
+                if members
+                else f"*{translate(interaction, 'common.none')}*"
+            )
             if len(members) > 15:
-                member_list += f" y {len(members) - 15} mas..."
+                member_list += translate(
+                    interaction,
+                    "vanity.list_more",
+                    count=len(members) - 15,
+                )
             embed.add_field(name=f"{vanity} ({len(members)})", value=member_list, inline=False)
 
-        embed.set_footer(text=f"Total: {total} usuarios")
+        embed.set_footer(text=translate(interaction, "common.total_users", count=total))
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @vanity.command(name="reset", description="Borra toda la configuracion de vanity")
@@ -294,22 +328,28 @@ class VanitySlashCog(commands.Cog):
         if cog is None:
             return
 
-        view = ConfirmResetView(interaction.user.id)
+        view = ConfirmResetView(interaction.user.id, get_language(interaction))
         embed = discord.Embed(
-            title="Estas seguro?",
-            description="Esto eliminara todas las vanitys y su configuracion.",
+            title=translate(interaction, "vanity.reset_title"),
+            description=translate(interaction, "vanity.reset_description"),
             color=0xFEE75C,
         )
         await self._send(interaction, embed=embed, view=view)
         await view.wait()
 
         if not view.confirmed:
-            await interaction.followup.send("Operacion cancelada.", ephemeral=True)
+            await interaction.followup.send(
+                translate(interaction, "common.cancelled"),
+                ephemeral=True,
+            )
             return
 
         delete_all_vanity(interaction.guild.id)
         cog._invalidate_guild_cache(interaction.guild.id)
-        await interaction.followup.send("Toda la configuracion de vanity ha sido borrada.", ephemeral=True)
+        await interaction.followup.send(
+            translate(interaction, "vanity.reset_done"),
+            ephemeral=True,
+        )
 
 
 async def setup(bot: commands.Bot):

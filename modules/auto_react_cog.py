@@ -11,19 +11,22 @@ from discord.ext import commands
 
 import database as db
 from command_utils import RestrictedView, parse_emoji_tokens, send_response
+from localization import get_language, translate, translate_language
 
 log = logging.getLogger("bot")
 CUSTOM_EMOJI_RE = re.compile(r"<a?:(\w+):(\d+)>")
 
 
 class ConfirmClearView(RestrictedView):
-    def __init__(self, author_id: int):
+    def __init__(self, author_id: int, language: str):
         super().__init__(
             author_id=author_id,
             timeout=30,
             required_permissions=("manage_guild",),
         )
         self.confirmed = False
+        self.confirm.label = translate_language(language, "common.confirm")
+        self.cancel.label = translate_language(language, "common.cancel")
 
     @discord.ui.button(label="Confirmar", style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, _: discord.ui.Button):
@@ -72,7 +75,7 @@ class AutoReactCog(commands.Cog):
 
         if message is None:
             try:
-                probe_message = await ctx.channel.send("Validando emojis...")
+                probe_message = await ctx.channel.send(translate(ctx, "react.probe"))
                 message = probe_message
             except discord.HTTPException:
                 message = None
@@ -115,7 +118,7 @@ class AutoReactCog(commands.Cog):
     async def react(self, ctx: commands.Context):
         await send_response(
             ctx,
-            "Usa `c!react add`, `!react add` o `/react add`. Tambien tienes `remove`, `list`, `clear` y `panel`.",
+            translate(ctx, "react.help"),
             mention_author=False,
             ephemeral=True,
         )
@@ -131,7 +134,7 @@ class AutoReactCog(commands.Cog):
         if not trigger_phrase:
             await send_response(
                 ctx,
-                "La palabra o frase no puede estar vacía.",
+                translate(ctx, "react.empty_trigger"),
                 mention_author=False,
                 ephemeral=True,
             )
@@ -139,7 +142,7 @@ class AutoReactCog(commands.Cog):
         if len(trigger_phrase) > 100:
             await send_response(
                 ctx,
-                "La palabra o frase no puede superar los 100 caracteres.",
+                translate(ctx, "react.max_trigger"),
                 mention_author=False,
                 ephemeral=True,
             )
@@ -149,7 +152,7 @@ class AutoReactCog(commands.Cog):
         if not emoji_tokens:
             await send_response(
                 ctx,
-                "Debes proporcionar al menos un emoji.",
+                translate(ctx, "react.no_emojis"),
                 mention_author=False,
                 ephemeral=True,
             )
@@ -158,7 +161,7 @@ class AutoReactCog(commands.Cog):
         if len(emoji_tokens) > 20:
             await send_response(
                 ctx,
-                "Puedes agregar maximo 20 reacciones por palabra.",
+                translate(ctx, "react.max_emojis"),
                 mention_author=False,
                 ephemeral=True,
             )
@@ -168,7 +171,7 @@ class AutoReactCog(commands.Cog):
         if not validated_emojis:
             await send_response(
                 ctx,
-                "Ninguno de los emojis proporcionados es valido.",
+                translate(ctx, "react.no_valid_emojis"),
                 mention_author=False,
                 ephemeral=True,
             )
@@ -177,12 +180,14 @@ class AutoReactCog(commands.Cog):
         db.add_auto_reaction(ctx.guild.id, trigger_phrase, validated_emojis)
         self._invalidate_guild_cache(ctx.guild.id)
 
-        message = (
-            f'Reacciones automaticas configuradas para **"{trigger_phrase}"**\n'
-            f"Reacciones: {' '.join(validated_emojis)}"
+        message = translate(
+            ctx,
+            "react.added",
+            trigger=trigger_phrase,
+            emojis=" ".join(validated_emojis),
         )
         if rejected_emojis:
-            message += f"\nOmitidos: {' '.join(rejected_emojis)}"
+            message += "\n" + translate(ctx, "react.omitted", emojis=" ".join(rejected_emojis))
 
         await send_response(ctx, message, mention_author=False)
 
@@ -195,7 +200,7 @@ class AutoReactCog(commands.Cog):
         if not config:
             await send_response(
                 ctx,
-                f'No hay reacciones configuradas para **"{trigger_phrase}"**.',
+                translate(ctx, "react.not_found", trigger=trigger_phrase),
                 mention_author=False,
                 ephemeral=True,
             )
@@ -205,7 +210,7 @@ class AutoReactCog(commands.Cog):
         self._invalidate_guild_cache(ctx.guild.id)
         await send_response(
             ctx,
-            f'Reacciones automaticas eliminadas para **"{trigger_phrase}"**.',
+            translate(ctx, "react.removed", trigger=trigger_phrase),
             mention_author=False,
         )
 
@@ -216,15 +221,15 @@ class AutoReactCog(commands.Cog):
         if not configs:
             await send_response(
                 ctx,
-                "No hay reacciones automaticas configuradas en este servidor.",
+                translate(ctx, "react.none"),
                 mention_author=False,
                 ephemeral=True,
             )
             return
 
         embed = discord.Embed(
-            title="Reacciones automaticas configuradas",
-            description=f"Total: **{len(configs)}** palabra(s) configurada(s)",
+            title=translate(ctx, "react.list_title"),
+            description=translate(ctx, "react.list_description", count=len(configs)),
             color=0xE74C3C,
         )
 
@@ -233,7 +238,7 @@ class AutoReactCog(commands.Cog):
                 emojis_list = json.loads(config["emojis"])
                 emoji_preview = " ".join(emojis_list)
             except json.JSONDecodeError:
-                emoji_preview = "Error al cargar emojis"
+                emoji_preview = translate(ctx, "react.decode_error")
 
             embed.add_field(
                 name=f'{index}. "{config["trigger_word"]}"',
@@ -242,9 +247,9 @@ class AutoReactCog(commands.Cog):
             )
 
         footer = (
-            f"Mostrando primeras 25 de {len(configs)} configuraciones"
+            translate(ctx, "react.footer_limited", count=len(configs))
             if len(configs) > 25
-            else f"{len(configs)} configuracion(es) en total"
+            else translate(ctx, "react.footer_all", count=len(configs))
         )
         embed.set_footer(text=footer)
         await send_response(ctx, embed=embed, mention_author=False, ephemeral=True)
@@ -256,16 +261,16 @@ class AutoReactCog(commands.Cog):
         if not configs:
             await send_response(
                 ctx,
-                "No hay reacciones automaticas configuradas en este servidor.",
+                translate(ctx, "react.none"),
                 mention_author=False,
                 ephemeral=True,
             )
             return
 
-        view = ConfirmClearView(ctx.author.id)
+        view = ConfirmClearView(ctx.author.id, get_language(ctx))
         await send_response(
             ctx,
-            f"Vas a eliminar **{len(configs)}** configuracion(es) de reacciones automaticas. Confirma con el boton.",
+            translate(ctx, "react.confirm_clear", count=len(configs)),
             mention_author=False,
             view=view,
             ephemeral=True,
@@ -273,14 +278,19 @@ class AutoReactCog(commands.Cog):
         await view.wait()
 
         if not view.confirmed:
-            await send_response(ctx, "Operacion cancelada.", mention_author=False, ephemeral=True)
+            await send_response(
+                ctx,
+                translate(ctx, "common.cancelled"),
+                mention_author=False,
+                ephemeral=True,
+            )
             return
 
         db.clear_auto_reactions(ctx.guild.id)
         self._invalidate_guild_cache(ctx.guild.id)
         await send_response(
             ctx,
-            f"Se eliminaron **{len(configs)}** configuracion(es) de reacciones automaticas.",
+            translate(ctx, "react.cleared", count=len(configs)),
             mention_author=False,
             ephemeral=True,
         )

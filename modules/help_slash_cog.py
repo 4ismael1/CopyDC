@@ -2,7 +2,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from modules.help_cog import HelpView, resolve_help_language
+from localization import get_language
+from modules.help_cog import HelpView
 
 
 class HelpSlashCog(commands.Cog):
@@ -11,8 +12,7 @@ class HelpSlashCog(commands.Cog):
 
     @app_commands.command(name="help", description="Muestra el menu de ayuda")
     async def slash_help(self, interaction: discord.Interaction):
-        locale = interaction.guild_locale or interaction.locale
-        view = HelpView(lang=resolve_help_language(locale), current_index=0)
+        view = HelpView(lang=get_language(interaction), current_index=0)
         await interaction.response.send_message(embed=view.embeds[0], view=view, ephemeral=True)
 
 

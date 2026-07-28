@@ -21,6 +21,22 @@ y ofrece comandos slash para los módulos compatibles.
 La ayuda completa está disponible dentro de Discord con `/help`, `c!help` o
 `!help`.
 
+## Idiomas
+
+Los mensajes, embeds, menús y paneles públicos están disponibles en español e
+inglés. Por defecto, Copy usa español cuando el idioma preferido del servidor
+de Discord es una variante de español y usa inglés para cualquier otro idioma.
+
+Un miembro con el permiso **Gestionar servidor** puede ejecutar `/language`,
+`c!language` o `!language` y elegir:
+
+- **Automático**: seguir el idioma preferido del servidor.
+- **Español**: forzar español para todo el servidor.
+- **English**: forzar inglés para todo el servidor.
+
+La selección se guarda en la base de datos y se conserva después de reiniciar
+el bot.
+
 ## Legal
 
 - [Política de privacidad](https://copy.tyr.lat/privacy)

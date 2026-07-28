@@ -11,6 +11,7 @@ from discord.ext import commands, tasks
 
 import database as db
 from command_utils import maybe_defer, send_response
+from localization import get_language, translate, translate_language
 
 log = logging.getLogger("bot")
 MAX_CONFIGURED_GAMES = 20
@@ -39,9 +40,11 @@ def matching_lfg_game(member: discord.Member, games: list[Any]):
 
 
 class LFGDashboardView(discord.ui.View):
-    def __init__(self, cog: LiveLFGCog):
+    def __init__(self, cog: LiveLFGCog, language: str = "en"):
         super().__init__(timeout=None)
         self.cog = cog
+        self.enroll.label = translate_language(language, "lfg.button.enroll")
+        self.leave.label = translate_language(language, "lfg.button.leave")
 
     @discord.ui.button(
         label="Participar automáticamente",
@@ -209,36 +212,38 @@ class LiveLFGCog(commands.Cog):
                 grouped.setdefault(assignment["game_id"], []).append(assignment["user_id"])
 
         embed = discord.Embed(
-            title="LFG en vivo",
-            description=(
-                "Jugadores inscritos que están usando ahora una actividad configurada. "
-                "El panel cambia automáticamente cuando comienzan o dejan el juego."
-            ),
+            title=translate(guild, "lfg.dashboard.title"),
+            description=translate(guild, "lfg.dashboard.description"),
             color=0x5865F2,
             timestamp=datetime.now(UTC),
         )
         total = 0
         if not games:
             embed.add_field(
-                name="Sin juegos configurados",
-                value="Un administrador puede añadirlos con `/lfg game_add`.",
+                name=translate(guild, "lfg.dashboard.empty_name"),
+                value=translate(guild, "lfg.dashboard.empty_value"),
                 inline=False,
             )
         for game in games:
             user_ids = grouped.get(game["game_id"], [])
             total += len(user_ids)
             visible = user_ids[:MAX_VISIBLE_PLAYERS_PER_GAME]
-            value = " ".join(f"<@{user_id}>" for user_id in visible) or "Nadie jugando ahora"
+            value = " ".join(f"<@{user_id}>" for user_id in visible) or translate(
+                guild, "lfg.dashboard.nobody"
+            )
             if len(user_ids) > len(visible):
-                value += f"\n…y {len(user_ids) - len(visible)} más"
+                value += "\n" + translate(
+                    guild,
+                    "lfg.dashboard.more",
+                    count=len(user_ids) - len(visible),
+                )
             embed.add_field(
                 name=f"{game['display_name']} · {len(user_ids)}",
                 value=value,
                 inline=False,
             )
-        embed.set_footer(
-            text=f"{total} jugadores disponibles · Participación voluntaria · No se guarda historial"
-        )
+        embed.set_footer(text=translate(guild, "lfg.dashboard.footer", count=total))
+        localized_view = LFGDashboardView(self, get_language(guild))
 
         message = None
         if settings["dashboard_message_id"]:
@@ -249,14 +254,14 @@ class LiveLFGCog(commands.Cog):
         if message is None:
             message = await channel.send(
                 embed=embed,
-                view=self.dashboard_view,
+                view=localized_view,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             await asyncio.to_thread(db.set_lfg_dashboard_message, guild_id, message.id)
         else:
             await message.edit(
                 embed=embed,
-                view=self.dashboard_view,
+                view=localized_view,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
 
@@ -268,11 +273,15 @@ class LiveLFGCog(commands.Cog):
     ):
         if interaction.guild is None or not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message(
-                "Este control solo funciona en un servidor.", ephemeral=True
+                translate(interaction, "lfg.server_only"),
+                ephemeral=True,
             )
             return
         if await asyncio.to_thread(db.get_lfg_settings, interaction.guild.id) is None:
-            await interaction.response.send_message("El LFG no está configurado.", ephemeral=True)
+            await interaction.response.send_message(
+                translate(interaction, "lfg.not_configured_short"),
+                ephemeral=True,
+            )
             return
         await interaction.response.defer(ephemeral=True)
         if enrolled:
@@ -286,7 +295,7 @@ class LiveLFGCog(commands.Cog):
             if changed:
                 self.schedule_dashboard_update(interaction.guild.id)
             await interaction.followup.send(
-                "Participación activada. Solo aparecerás mientras uses un juego configurado.",
+                translate(interaction, "lfg.enrolled"),
                 ephemeral=True,
             )
             return
@@ -299,7 +308,7 @@ class LiveLFGCog(commands.Cog):
         await self._remove_tracked_role(interaction.user, assignment)
         self.schedule_dashboard_update(interaction.guild.id)
         await interaction.followup.send(
-            "Saliste del LFG. Tu estado activo y el rol temporal fueron eliminados.",
+            translate(interaction, "lfg.leave"),
             ephemeral=True,
         )
 
@@ -316,6 +325,10 @@ class LiveLFGCog(commands.Cog):
         if assignment is not None:
             self.schedule_dashboard_update(member.guild.id)
 
+    @commands.Cog.listener("on_copy_language_change")
+    async def lfg_language_change(self, guild: discord.Guild, _: str):
+        await self.update_dashboard(guild.id)
+
     @commands.hybrid_group(
         name="lfg",
         invoke_without_command=True,
@@ -326,8 +339,7 @@ class LiveLFGCog(commands.Cog):
     async def lfg(self, ctx: commands.Context):
         await send_response(
             ctx,
-            "Usa `/lfg enroll` para participar, `/lfg leave` para salir y `/lfg games` "
-            "para ver las actividades configuradas.",
+            translate(ctx, "lfg.help"),
             ephemeral=True,
         )
 
@@ -338,20 +350,24 @@ class LiveLFGCog(commands.Cog):
     async def lfg_setup(self, ctx: commands.Context, channel: discord.TextChannel):
         me = ctx.guild.me
         if me is None:
-            await send_response(ctx, "No pude resolver mis permisos en el servidor.", ephemeral=True)
+            await send_response(ctx, translate(ctx, "lfg.permissions_unresolved"), ephemeral=True)
             return
         permissions = channel.permissions_for(me)
         if not permissions.send_messages or not permissions.embed_links:
             await send_response(
                 ctx,
-                "Necesito enviar mensajes e insertar enlaces en ese canal.",
+                translate(ctx, "lfg.permissions_missing"),
                 ephemeral=True,
             )
             return
         await asyncio.to_thread(db.set_lfg_settings, ctx.guild.id, channel.id)
         await maybe_defer(ctx, ephemeral=True)
         await self.update_dashboard(ctx.guild.id)
-        await send_response(ctx, f"Panel LFG configurado en {channel.mention}.", ephemeral=True)
+        await send_response(
+            ctx,
+            translate(ctx, "lfg.setup_success", channel=channel.mention),
+            ephemeral=True,
+        )
 
     @lfg.command(name="game_add", description="Añade una actividad y su rol temporal")
     @app_commands.describe(
@@ -370,17 +386,17 @@ class LiveLFGCog(commands.Cog):
         display_name: str | None = None,
     ):
         if await asyncio.to_thread(db.get_lfg_settings, ctx.guild.id) is None:
-            await send_response(ctx, "Primero configura el módulo con `/lfg setup`.", ephemeral=True)
+            await send_response(ctx, translate(ctx, "lfg.setup_first"), ephemeral=True)
             return
         activity_name = activity_name.strip()
         display_name = (display_name or activity_name).strip()
         if not activity_name or len(activity_name) > 80 or not display_name or len(display_name) > 80:
-            await send_response(ctx, "Los nombres deben tener entre 1 y 80 caracteres.", ephemeral=True)
+            await send_response(ctx, translate(ctx, "lfg.names_invalid"), ephemeral=True)
             return
         if not self._manageable_role(ctx.guild, role):
             await send_response(
                 ctx,
-                "El rol debe ser independiente, no administrado y estar debajo del rol de Copy.",
+                translate(ctx, "lfg.role_invalid"),
                 ephemeral=True,
             )
             return
@@ -392,7 +408,7 @@ class LiveLFGCog(commands.Cog):
         if existing is None and len(existing_games) >= MAX_CONFIGURED_GAMES:
             await send_response(
                 ctx,
-                f"El límite es de {MAX_CONFIGURED_GAMES} juegos por servidor.",
+                translate(ctx, "lfg.activity_limit", limit=MAX_CONFIGURED_GAMES),
                 ephemeral=True,
             )
             return
@@ -408,8 +424,12 @@ class LiveLFGCog(commands.Cog):
         await self.update_dashboard(ctx.guild.id)
         await send_response(
             ctx,
-            f"Actividad exacta **{discord.utils.escape_markdown(activity_name)}** vinculada a {role.mention}. "
-            "Usa un rol dedicado: Copy solo retira roles que haya registrado como asignaciones LFG activas.",
+            translate(
+                ctx,
+                "lfg.activity_added",
+                activity=discord.utils.escape_markdown(activity_name),
+                role=role.mention,
+            ),
             ephemeral=True,
         )
 
@@ -419,7 +439,7 @@ class LiveLFGCog(commands.Cog):
     async def lfg_game_remove(self, ctx: commands.Context, *, activity_name: str):
         game = await asyncio.to_thread(db.get_lfg_game_by_activity, ctx.guild.id, activity_name)
         if game is None:
-            await send_response(ctx, "No existe una actividad con ese nombre exacto.", ephemeral=True)
+            await send_response(ctx, translate(ctx, "lfg.activity_missing"), ephemeral=True)
             return
         assignments = await asyncio.to_thread(db.get_lfg_assignments, ctx.guild.id)
         affected = [row for row in assignments if row["game_id"] == game["game_id"]]
@@ -431,7 +451,11 @@ class LiveLFGCog(commands.Cog):
         await self.update_dashboard(ctx.guild.id)
         await send_response(
             ctx,
-            f"Actividad **{discord.utils.escape_markdown(game['display_name'])}** eliminada.",
+            translate(
+                ctx,
+                "lfg.activity_removed",
+                activity=discord.utils.escape_markdown(game["display_name"]),
+            ),
             ephemeral=True,
         )
 
@@ -439,15 +463,23 @@ class LiveLFGCog(commands.Cog):
     async def lfg_games(self, ctx: commands.Context):
         games = await asyncio.to_thread(db.get_lfg_games, ctx.guild.id)
         if not games:
-            await send_response(ctx, "No hay actividades LFG configuradas.", ephemeral=True)
+            await send_response(ctx, translate(ctx, "lfg.games.none"), ephemeral=True)
             return
         lines = [
-            f"**{discord.utils.escape_markdown(game['display_name'])}** · "
-            f"actividad exacta: `{discord.utils.escape_markdown(game['activity_name'])}` · "
-            f"<@&{game['role_id']}>"
+            translate(
+                ctx,
+                "lfg.games.item",
+                display_name=discord.utils.escape_markdown(game["display_name"]),
+                activity_name=discord.utils.escape_markdown(game["activity_name"]),
+                role=f"<@&{game['role_id']}>",
+            )
             for game in games
         ]
-        embed = discord.Embed(title="Actividades LFG", description="\n".join(lines), color=0x5865F2)
+        embed = discord.Embed(
+            title=translate(ctx, "lfg.games.title"),
+            description="\n".join(lines),
+            color=0x5865F2,
+        )
         await send_response(
             ctx,
             embed=embed,
@@ -458,15 +490,14 @@ class LiveLFGCog(commands.Cog):
     @lfg.command(name="enroll", description="Participa voluntariamente en el LFG automático")
     async def lfg_enroll(self, ctx: commands.Context):
         if await asyncio.to_thread(db.get_lfg_settings, ctx.guild.id) is None:
-            await send_response(ctx, "El LFG no está configurado en este servidor.", ephemeral=True)
+            await send_response(ctx, translate(ctx, "lfg.not_configured"), ephemeral=True)
             return
         await asyncio.to_thread(db.enroll_lfg_user, ctx.guild.id, ctx.author.id, utc_now_iso())
         if await self.process_member(ctx.author):
             self.schedule_dashboard_update(ctx.guild.id)
         await send_response(
             ctx,
-            "Participación activada. Aparecerás únicamente cuando Discord informe que estás "
-            "usando una actividad configurada.",
+            translate(ctx, "lfg.enrolled_command"),
             ephemeral=True,
         )
 
@@ -477,7 +508,7 @@ class LiveLFGCog(commands.Cog):
         self.schedule_dashboard_update(ctx.guild.id)
         await send_response(
             ctx,
-            "Saliste del LFG. Se eliminó tu asignación actual y el rol temporal.",
+            translate(ctx, "lfg.leave_command"),
             ephemeral=True,
         )
 
@@ -488,9 +519,9 @@ class LiveLFGCog(commands.Cog):
             asyncio.to_thread(db.get_lfg_assignment, ctx.guild.id, ctx.author.id),
         )
         if not enrolled:
-            message = "No estás inscrito. Usa `/lfg enroll` para participar."
+            message = translate(ctx, "lfg.status.not_enrolled")
         elif assignment is None:
-            message = "Estás inscrito, pero ahora no usas ninguna actividad configurada."
+            message = translate(ctx, "lfg.status.enrolled_idle")
         else:
             game = next(
                 (
@@ -501,9 +532,13 @@ class LiveLFGCog(commands.Cog):
                 None,
             )
             message = (
-                f"Estás disponible en **{discord.utils.escape_markdown(game['display_name'])}**."
+                translate(
+                    ctx,
+                    "lfg.status.active",
+                    game=discord.utils.escape_markdown(game["display_name"]),
+                )
                 if game
-                else "Tu asignación está siendo actualizada."
+                else translate(ctx, "lfg.status.updating")
             )
         await send_response(ctx, message, ephemeral=True)
 
@@ -511,11 +546,7 @@ class LiveLFGCog(commands.Cog):
     async def lfg_privacy(self, ctx: commands.Context):
         await send_response(
             ctx,
-            "La participación es voluntaria. Copy procesa únicamente cambios de actividades de tipo "
-            "`Playing` para compararlos con los nombres configurados. Conserva tu inscripción y, "
-            "mientras juegas, la asignación activa necesaria para el rol y el panel. Al terminar la "
-            "actividad o usar `/lfg leave`, esa asignación se elimina. No se guarda historial de "
-            "presencia, estados ni juegos.",
+            translate(ctx, "lfg.privacy"),
             ephemeral=True,
         )
 

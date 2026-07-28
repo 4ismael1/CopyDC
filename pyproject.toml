@@ -18,12 +18,15 @@ dev = [
 ]
 
 [tool.setuptools]
-py-modules = ["main", "database", "command_utils"]
+py-modules = ["main", "database", "command_utils", "localization"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["modules*", "admin_modules*", "scripts*"]
+include = ["modules*", "admin_modules*", "scripts*", "locales*"]
 exclude = ["tests*", "logs*"]
+
+[tool.setuptools.package-data]
+locales = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

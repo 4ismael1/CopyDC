@@ -19,6 +19,7 @@ from discord.ext import commands, tasks
 
 import database as db
 from command_utils import maybe_defer, send_response
+from localization import get_language, translate, translate_language
 
 log = logging.getLogger("bot")
 MAX_SUBJECT_LENGTH = 100
@@ -81,15 +82,20 @@ def _message_record(message: Any) -> dict[str, Any]:
     }
 
 
-def _render_message(record: dict[str, Any]) -> str:
+def _render_message(record: dict[str, Any], language: str) -> str:
     author = html.escape(record["author_display_name"])
     username = html.escape(record["author_name"])
     avatar = safe_external_url(record["author_avatar"])
     timestamp = html.escape(record["created_at"])
-    edited = " · editado" if record["edited_at"] else ""
+    edited = (
+        " · " + html.escape(translate_language(language, "support.transcript.edited"))
+        if record["edited_at"]
+        else ""
+    )
     content = html.escape(record["content"] or "").replace("\n", "<br>")
     if not content:
-        content = '<span class="muted">(sin texto)</span>'
+        empty = html.escape(translate_language(language, "support.transcript.empty"))
+        content = f'<span class="muted">{empty}</span>'
 
     attachment_html = ""
     if record["attachments"]:
@@ -100,7 +106,9 @@ def _render_message(record: dict[str, Any]) -> str:
             size = int(attachment["size"] or 0)
             items.append(
                 f'<li><a href="{url}" rel="noreferrer">{filename}</a> '
-                f'<span class="muted">({size:,} bytes)</span></li>'
+                f'<span class="muted">('
+                f"{html.escape(translate_language(language, 'support.transcript.attachment_bytes', size=f'{size:,}'))}"
+                f")</span></li>"
             )
         attachment_html = f'<ul class="attachments">{"".join(items)}</ul>'
 
@@ -124,7 +132,10 @@ def _render_message(record: dict[str, Any]) -> str:
         '<div class="message-body">'
         f'<header><strong>{author}</strong> <span class="muted">{username} · {timestamp}{edited}</span></header>'
         f'<div class="content">{content}</div>{attachment_html}{embed_html}'
-        f'<footer class="muted">Message ID: {record["id"]} · User ID: {record["author_id"]}</footer>'
+        f'<footer class="muted">'
+        f"{html.escape(translate_language(language, 'support.transcript.message_id'))}: {record['id']} · "
+        f"{html.escape(translate_language(language, 'support.transcript.user_id'))}: {record['author_id']}"
+        f"</footer>"
         "</div></article>"
     )
 
@@ -139,23 +150,23 @@ def build_transcript_html(
     closed_by: str,
     close_reason: str,
     records: list[dict[str, Any]],
+    language: str = "en",
 ) -> tuple[bytes, str]:
     canonical = json.dumps(records, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     digest = hashlib.sha256(canonical).hexdigest()
-    messages = "".join(_render_message(record) for record in records)
-    escaped_subject = html.escape(subject)
+    messages = "".join(_render_message(record, language) for record in records)
     escaped_reason = html.escape(close_reason)
     escaped_guild = html.escape(guild_name)
     escaped_channel = html.escape(channel_name)
     escaped_closer = html.escape(closed_by)
 
     document = f"""<!doctype html>
-<html lang="es">
+<html lang="{language}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: http:; style-src 'unsafe-inline'">
-<title>Caso #{case_id} - {escaped_subject}</title>
+<title>{html.escape(translate_language(language, "support.transcript.title", case_id=case_id, subject=subject))}</title>
 <style>
 :root {{ color-scheme: dark; font-family: Inter, system-ui, sans-serif; }}
 body {{ background:#111214; color:#dbdee1; margin:0; padding:24px; }}
@@ -175,13 +186,13 @@ footer {{ margin-top:7px; }}
 </head>
 <body><main>
 <section class="summary">
-<h1>Caso #{case_id}: {escaped_subject}</h1>
-<p><strong>Servidor:</strong> {escaped_guild}<br>
-<strong>Canal:</strong> #{escaped_channel}<br>
-<strong>Usuario inicial:</strong> {opener_id}<br>
-<strong>Cerrado por:</strong> {escaped_closer}<br>
-<strong>Motivo:</strong> {escaped_reason}<br>
-<strong>Mensajes:</strong> {len(records)}<br>
+<h1>{html.escape(translate_language(language, "support.intro.title", case_id=case_id, subject=subject))}</h1>
+<p><strong>{html.escape(translate_language(language, "support.transcript.server"))}:</strong> {escaped_guild}<br>
+<strong>{html.escape(translate_language(language, "support.transcript.channel"))}:</strong> #{escaped_channel}<br>
+<strong>{html.escape(translate_language(language, "support.transcript.opener"))}:</strong> {opener_id}<br>
+<strong>{html.escape(translate_language(language, "support.transcript.closed_by"))}:</strong> {escaped_closer}<br>
+<strong>{html.escape(translate_language(language, "support.transcript.reason"))}:</strong> {escaped_reason}<br>
+<strong>{html.escape(translate_language(language, "support.transcript.messages"))}:</strong> {len(records)}<br>
 <strong>SHA-256:</strong> <code>{digest}</code></p>
 </section>
 {messages}
@@ -242,8 +253,7 @@ class SupportCasesCog(commands.Cog):
     async def case(self, ctx: commands.Context):
         await send_response(
             ctx,
-            "Usa `/case open`, `/case close`, `/case list` o `/case privacy`. "
-            "La configuración administrativa está en `/case setup`.",
+            translate(ctx, "support.help"),
             ephemeral=True,
         )
 
@@ -265,19 +275,19 @@ class SupportCasesCog(commands.Cog):
         retention_days: int = 30,
     ):
         if not 1 <= retention_days <= 90:
-            await send_response(ctx, "La retención debe estar entre 1 y 90 días.", ephemeral=True)
+            await send_response(ctx, translate(ctx, "support.config_retention"), ephemeral=True)
             return
         if support_role.is_default():
             await send_response(
                 ctx,
-                "El rol de soporte no puede ser `@everyone`; selecciona un rol privado del equipo.",
+                translate(ctx, "support.config_role_everyone"),
                 ephemeral=True,
             )
             return
         if archive_channel.permissions_for(ctx.guild.default_role).view_channel:
             await send_response(
                 ctx,
-                "El canal de archivo debe ser privado para `@everyone`. Ocúltalo antes de activar el módulo.",
+                translate(ctx, "support.config_archive_public"),
                 ephemeral=True,
             )
             return
@@ -285,7 +295,7 @@ class SupportCasesCog(commands.Cog):
         if me is None or not archive_channel.permissions_for(me).send_messages:
             await send_response(
                 ctx,
-                "No puedo enviar archivos en el canal de archivo seleccionado.",
+                translate(ctx, "support.config_archive_permissions"),
                 ephemeral=True,
             )
             return
@@ -299,8 +309,14 @@ class SupportCasesCog(commands.Cog):
         )
         await send_response(
             ctx,
-            f"Casos configurados en **{category.name}**. Expedientes: {archive_channel.mention}; "
-            f"equipo: {support_role.mention}; retención: **{retention_days} días**.",
+            translate(
+                ctx,
+                "support.config_success",
+                category=category.name,
+                archive=archive_channel.mention,
+                role=support_role.mention,
+                days=retention_days,
+            ),
         )
 
     @case.command(name="open", description="Abre un caso privado con el equipo de soporte")
@@ -309,15 +325,13 @@ class SupportCasesCog(commands.Cog):
     async def case_open(self, ctx: commands.Context, *, subject: str):
         settings = await self._settings(ctx.guild.id)
         if settings is None:
-            await send_response(
-                ctx, "Este servidor todavía no configuró el sistema de casos.", ephemeral=True
-            )
+            await send_response(ctx, translate(ctx, "support.not_configured"), ephemeral=True)
             return
         subject = subject.strip()
         if not subject or len(subject) > MAX_SUBJECT_LENGTH:
             await send_response(
                 ctx,
-                f"El asunto debe tener entre 1 y {MAX_SUBJECT_LENGTH} caracteres.",
+                translate(ctx, "support.subject_invalid", limit=MAX_SUBJECT_LENGTH),
                 ephemeral=True,
             )
             return
@@ -331,7 +345,12 @@ class SupportCasesCog(commands.Cog):
             if channel is not None:
                 await send_response(
                     ctx,
-                    f"Ya tienes abierto el caso #{existing['case_id']}: {channel.mention}",
+                    translate(
+                        ctx,
+                        "support.already_open",
+                        case_id=existing["case_id"],
+                        channel=channel.mention,
+                    ),
                     ephemeral=True,
                 )
                 return
@@ -342,7 +361,7 @@ class SupportCasesCog(commands.Cog):
         if not isinstance(category, discord.CategoryChannel) or support_role is None or me is None:
             await send_response(
                 ctx,
-                "La categoría o el rol configurado ya no existe. Un administrador debe ejecutar `/case setup`.",
+                translate(ctx, "support.category_missing"),
                 ephemeral=True,
             )
             return
@@ -388,7 +407,7 @@ class SupportCasesCog(commands.Cog):
             await channel.delete(reason="Rollback: duplicate support case")
             await send_response(
                 ctx,
-                "Ya existe otro caso abierto para tu usuario. Usa `/case list` o contacta al equipo.",
+                translate(ctx, "support.duplicate"),
                 ephemeral=True,
             )
             return
@@ -398,54 +417,60 @@ class SupportCasesCog(commands.Cog):
 
         await channel.edit(name=f"case-{case_id}-{safe_channel_slug(ctx.author.display_name)}")
         embed = discord.Embed(
-            title=f"Caso #{case_id}: {subject}",
-            description=(
-                f"{ctx.author.mention}, describe aquí lo ocurrido. El equipo {support_role.mention} "
-                "puede responder directamente en este canal.\n\n"
-                "Al cerrar el caso, Copy generará un expediente completo del historial y lo enviará "
-                "al archivo privado configurado."
+            title=translate(ctx, "support.intro.title", case_id=case_id, subject=subject),
+            description=translate(
+                ctx,
+                "support.intro.description",
+                user=ctx.author.mention,
+                role=support_role.mention,
             ),
             color=0x5865F2,
         )
-        embed.set_footer(text="Usa /case close dentro de este canal para cerrarlo.")
+        embed.set_footer(text=translate(ctx, "support.intro.footer"))
         await channel.send(
             content=f"{ctx.author.mention} {support_role.mention}",
             embed=embed,
             allowed_mentions=discord.AllowedMentions(users=True, roles=True, everyone=False),
         )
-        await send_response(ctx, f"Caso #{case_id} creado: {channel.mention}", ephemeral=True)
+        await send_response(
+            ctx,
+            translate(ctx, "support.created", case_id=case_id, channel=channel.mention),
+            ephemeral=True,
+        )
 
     @case.command(name="close", description="Cierra el caso actual y genera su expediente completo")
     @app_commands.describe(reason="Motivo o resolución del cierre")
     @commands.bot_has_permissions(manage_channels=True)
-    async def case_close(self, ctx: commands.Context, *, reason: str = "Caso resuelto"):
+    async def case_close(self, ctx: commands.Context, *, reason: str = ""):
         case = await asyncio.to_thread(db.get_support_case_by_channel, ctx.channel.id)
         if case is None or case["guild_id"] != ctx.guild.id:
-            await send_response(ctx, "Este canal no es un caso administrado por Copy.", ephemeral=True)
+            await send_response(ctx, translate(ctx, "support.not_case"), ephemeral=True)
             return
         if case["status"] != "open":
-            await send_response(ctx, "Este caso ya está cerrado.", ephemeral=True)
+            await send_response(ctx, translate(ctx, "support.already_closed"), ephemeral=True)
             return
         settings = await self._settings(ctx.guild.id)
         if settings is None:
-            await send_response(ctx, "La configuración del módulo fue eliminada.", ephemeral=True)
+            await send_response(ctx, translate(ctx, "support.settings_deleted"), ephemeral=True)
             return
         member = ctx.author
         if member.id != case["opener_id"] and not self._is_support(member, settings):
             await send_response(
-                ctx, "Solo quien abrió el caso o el equipo de soporte puede cerrarlo.", ephemeral=True
+                ctx,
+                translate(ctx, "support.close_permission"),
+                ephemeral=True,
             )
             return
-        reason = reason.strip()[:300] or "Caso resuelto"
+        reason = reason.strip()[:300] or translate(ctx, "support.default_reason")
         if ctx.channel.id in self._closing_channels:
-            await send_response(ctx, "El cierre de este caso ya está en proceso.", ephemeral=True)
+            await send_response(ctx, translate(ctx, "support.close_in_progress"), ephemeral=True)
             return
 
         archive_channel = ctx.guild.get_channel(settings["archive_channel_id"])
         if not isinstance(archive_channel, discord.TextChannel):
             await send_response(
                 ctx,
-                "El canal de archivo ya no existe. Un administrador debe ejecutar `/case setup`.",
+                translate(ctx, "support.channel_archive_missing"),
                 ephemeral=True,
             )
             return
@@ -471,12 +496,16 @@ class SupportCasesCog(commands.Cog):
                 closed_by=f"{ctx.author} ({ctx.author.id})",
                 close_reason=reason,
                 records=records,
+                language=get_language(ctx),
             )
             if len(messages) > MAX_TRANSCRIPT_MESSAGES:
                 await send_response(
                     ctx,
-                    f"El caso supera el límite operativo de {MAX_TRANSCRIPT_MESSAGES:,} mensajes. "
-                    "Contacta al propietario del bot antes de cerrarlo.",
+                    translate(
+                        ctx,
+                        "support.close_limit",
+                        limit=f"{MAX_TRANSCRIPT_MESSAGES:,}",
+                    ),
                     ephemeral=True,
                 )
                 return
@@ -489,24 +518,35 @@ class SupportCasesCog(commands.Cog):
             if packaged is None:
                 await send_response(
                     ctx,
-                    "El expediente comprimido supera el límite de archivos de este servidor. "
-                    "Contacta al propietario del bot antes de cerrar este caso.",
+                    translate(ctx, "support.upload_too_large"),
                     ephemeral=True,
                 )
                 return
             transcript_payload, transcript_filename = packaged
 
             archive_embed = discord.Embed(
-                title=f"Expediente de soporte #{case['case_id']}",
-                description=f"**{case['subject']}**\nMotivo de cierre: {reason}",
+                title=translate(ctx, "support.archive.title", case_id=case["case_id"]),
+                description=(
+                    f"**{case['subject']}**\n" + translate(ctx, "support.archive.close_reason", reason=reason)
+                ),
                 color=0x57F287,
                 timestamp=datetime.now(UTC),
             )
-            archive_embed.add_field(name="Canal", value=f"`{ctx.channel.name}` · `{ctx.channel.id}`")
-            archive_embed.add_field(name="Mensajes", value=str(len(records)))
+            archive_embed.add_field(
+                name=translate(ctx, "support.archive.channel"),
+                value=f"`{ctx.channel.name}` · `{ctx.channel.id}`",
+            )
+            archive_embed.add_field(
+                name=translate(ctx, "support.archive.messages"),
+                value=str(len(records)),
+            )
             archive_embed.add_field(name="SHA-256", value=f"`{digest}`", inline=False)
             archive_embed.set_footer(
-                text=f"Retención configurada: {settings['retention_days']} días · No contiene adjuntos binarios"
+                text=translate(
+                    ctx,
+                    "support.archive.footer",
+                    days=settings["retention_days"],
+                )
             )
             archive_message = await archive_channel.send(
                 embed=archive_embed,
@@ -526,7 +566,9 @@ class SupportCasesCog(commands.Cog):
             if not changed:
                 await archive_message.delete()
                 await send_response(
-                    ctx, "El caso fue cerrado simultáneamente por otra persona.", ephemeral=True
+                    ctx,
+                    translate(ctx, "support.close_concurrent"),
+                    ephemeral=True,
                 )
                 return
 
@@ -546,8 +588,12 @@ class SupportCasesCog(commands.Cog):
             )
             await send_response(
                 ctx,
-                f"Caso #{case['case_id']} cerrado. Se archivaron **{len(records)} mensajes** "
-                "y el canal quedó en modo de solo lectura.",
+                translate(
+                    ctx,
+                    "support.close_success",
+                    case_id=case["case_id"],
+                    count=len(records),
+                ),
                 ephemeral=True,
             )
         finally:
@@ -559,11 +605,15 @@ class SupportCasesCog(commands.Cog):
     async def case_list(self, ctx: commands.Context, status: str = "open"):
         status = status.casefold().strip()
         if status not in {"open", "closed"}:
-            await send_response(ctx, "El estado debe ser `open` o `closed`.", ephemeral=True)
+            await send_response(ctx, translate(ctx, "support.status_invalid"), ephemeral=True)
             return
         rows = await asyncio.to_thread(db.get_support_cases_for_guild, ctx.guild.id, status)
         if not rows:
-            await send_response(ctx, f"No hay casos con estado `{status}`.", ephemeral=True)
+            await send_response(
+                ctx,
+                translate(ctx, "support.list.empty", status=status),
+                ephemeral=True,
+            )
             return
         lines = []
         for row in rows[:20]:
@@ -573,12 +623,12 @@ class SupportCasesCog(commands.Cog):
                 f"**#{row['case_id']}** · {target} · {discord.utils.escape_markdown(row['subject'])}"
             )
         embed = discord.Embed(
-            title=f"Casos {status}",
+            title=translate(ctx, "support.list.title", status=status),
             description="\n".join(lines),
             color=0x5865F2,
         )
         if len(rows) > 20:
-            embed.set_footer(text=f"Mostrando 20 de {len(rows)} casos.")
+            embed.set_footer(text=translate(ctx, "support.list.footer", count=len(rows)))
         await send_response(ctx, embed=embed, ephemeral=True)
 
     @case.command(name="delete_archive", description="Elimina el expediente archivado de un caso")
@@ -587,7 +637,7 @@ class SupportCasesCog(commands.Cog):
     async def case_delete_archive(self, ctx: commands.Context, case_id: int):
         case = await asyncio.to_thread(db.get_support_case, ctx.guild.id, case_id)
         if case is None or case["archive_channel_id"] is None or case["archive_message_id"] is None:
-            await send_response(ctx, "Ese caso no tiene un expediente archivado.", ephemeral=True)
+            await send_response(ctx, translate(ctx, "support.archive.missing"), ephemeral=True)
             return
         channel = ctx.guild.get_channel(case["archive_channel_id"])
         if isinstance(channel, discord.TextChannel):
@@ -597,16 +647,17 @@ class SupportCasesCog(commands.Cog):
             except discord.NotFound:
                 pass
         await asyncio.to_thread(db.clear_support_archive, case_id)
-        await send_response(ctx, f"Expediente del caso #{case_id} eliminado.", ephemeral=True)
+        await send_response(
+            ctx,
+            translate(ctx, "support.archive.deleted", case_id=case_id),
+            ephemeral=True,
+        )
 
     @case.command(name="privacy", description="Explica qué datos conserva el sistema de casos")
     async def case_privacy(self, ctx: commands.Context):
         await send_response(
             ctx,
-            "Copy procesa el historial del canal únicamente al cerrar el caso. "
-            "No guarda mensajes ni adjuntos en su base de datos: conserva IDs y metadatos del caso. "
-            "El HTML se publica en el canal privado configurado y se elimina según la retención del servidor. "
-            "Los adjuntos se registran como nombre, tamaño y enlace; no se copian sus archivos.",
+            translate(ctx, "support.privacy"),
             ephemeral=True,
         )
 
