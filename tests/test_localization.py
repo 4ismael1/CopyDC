@@ -1,4 +1,5 @@
 import ast
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -52,6 +53,17 @@ class LocalizationTests(unittest.TestCase):
             localization.catalog_keys("en"),
             localization.catalog_keys("es"),
         )
+
+    def test_catalogs_do_not_expose_literal_escape_sequences(self):
+        for language in ("en", "es"):
+            catalog_path = localization.LOCALES_DIR / f"{language}.json"
+            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+            invalid = {
+                key: value
+                for key, value in catalog.items()
+                if any(sequence in value for sequence in (r"\n", r"\r", r"\t"))
+            }
+            self.assertEqual(invalid, {})
 
     def test_translation_formats_values(self):
         translated = localization.translate_language(
