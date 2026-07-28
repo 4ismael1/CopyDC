@@ -1,0 +1,42 @@
+# modules/logging_cog.py
+import logging
+from pathlib import Path
+
+from discord.ext import commands
+
+
+class LoggingCog(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+        # Asegurar carpeta logs
+        base_dir = Path(__file__).resolve().parent.parent
+        logs_dir = base_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Configuración del logger con archivo
+        log_file = logs_dir / "bot.log"
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setLevel(logging.INFO)
+
+        formatter = logging.Formatter(
+            "%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        )
+        file_handler.setFormatter(formatter)
+
+        # Añadir handler al logger principal del bot (solo una vez)
+        self.logger = logging.getLogger("bot")
+        if not any(isinstance(h, logging.FileHandler) for h in self.logger.handlers):
+            self.logger.addHandler(file_handler)
+
+    # Opcional: solo errores globales (ignorando errores comunes)
+    @commands.Cog.listener()
+    async def on_command_error(self, ctx: commands.Context, error):
+        # Ignorar errores comunes que no necesitan logging
+        if isinstance(error, (commands.CommandNotFound, commands.CheckFailure, commands.NoPrivateMessage)):
+            return
+        self.logger.error(f"Error en comando '{ctx.command}': {error}")
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(LoggingCog(bot))
