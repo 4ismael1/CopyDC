@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from string import Formatter
 from types import SimpleNamespace
 from unittest import mock
 
@@ -74,6 +75,16 @@ class LocalizationTests(unittest.TestCase):
         )
         self.assertIn("English", translated)
 
+    def test_editor_help_preserves_documented_variables(self):
+        for language in ("en", "es"):
+            vanity = localization.translate_language(language, "vanity.editor_description")
+            clantag = localization.translate_language(language, "clantag.editor_description")
+            for variable in ("{user}", "{role}", "{server}"):
+                self.assertIn(variable, vanity)
+                self.assertIn(variable, clantag)
+            self.assertIn("{vanity}", vanity)
+            self.assertIn("{tag}", clantag)
+
     def test_all_literal_translation_keys_used_by_the_bot_exist(self):
         project_root = Path(__file__).resolve().parents[1]
         source_files = [
@@ -81,7 +92,10 @@ class LocalizationTests(unittest.TestCase):
             project_root / "command_utils.py",
             *sorted((project_root / "modules").glob("*.py")),
         ]
+        catalog = json.loads((localization.LOCALES_DIR / "en.json").read_text(encoding="utf-8"))
+        formatter = Formatter()
         used_keys: set[str] = set()
+        incomplete_calls: list[str] = []
 
         for source_file in source_files:
             tree = ast.parse(source_file.read_text(encoding="utf-8"))
@@ -103,9 +117,24 @@ class LocalizationTests(unittest.TestCase):
                 key = node.args[1]
                 if isinstance(key, ast.Constant) and isinstance(key.value, str):
                     used_keys.add(key.value)
+                    template = catalog.get(key.value)
+                    if template is None or any(keyword.arg is None for keyword in node.keywords):
+                        continue
+                    required = {
+                        field_name
+                        for _, field_name, _, _ in formatter.parse(template)
+                        if field_name is not None
+                    }
+                    supplied = {keyword.arg for keyword in node.keywords if keyword.arg is not None}
+                    missing_values = required - supplied
+                    if missing_values:
+                        incomplete_calls.append(
+                            f"{source_file.name}:{node.lineno} {key.value} missing={sorted(missing_values)}"
+                        )
 
         missing = used_keys - localization.catalog_keys("en")
         self.assertEqual(missing, set())
+        self.assertEqual(incomplete_calls, [])
 
 
 if __name__ == "__main__":

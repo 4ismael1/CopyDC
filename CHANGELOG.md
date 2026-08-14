@@ -15,6 +15,8 @@
 
 ### Corregido
 
+- Corregido el formato de las variables ilustrativas en los editores de embeds
+  de Vanity y Clan Tag, con validación automática de placeholders bilingües.
 - Protegidos los botones y confirmaciones para que solo pueda usarlos quien
   inició la operación, con una nueva comprobación de permisos.
 - Corregidas la jerarquía de roles y la limpieza de configuraciones al salir de

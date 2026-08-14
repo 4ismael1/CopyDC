@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from string import Formatter
 from typing import Any, Literal
 
 import database as db
@@ -19,6 +20,16 @@ log = logging.getLogger("copy.localization")
 
 _catalogs: dict[str, dict[str, str]] = {}
 _guild_modes: dict[int, LanguageMode] = {}
+_formatter = Formatter()
+
+
+def _template_fields(template: str, *, language: str, key: str) -> frozenset[str]:
+    try:
+        return frozenset(
+            field_name for _, field_name, _, _ in _formatter.parse(template) if field_name is not None
+        )
+    except ValueError as exc:
+        raise ValueError(f"Invalid translation template for {language}.{key}: {exc}") from exc
 
 
 def load_catalogs() -> None:
@@ -41,6 +52,20 @@ def load_catalogs() -> None:
             missing = sorted(reference_keys - keys)
             extra = sorted(keys - reference_keys)
             raise ValueError(f"Translation key mismatch for {language}: missing={missing}, extra={extra}")
+
+    for key in sorted(reference_keys):
+        expected_fields = _template_fields(
+            loaded[DEFAULT_LANGUAGE][key],
+            language=DEFAULT_LANGUAGE,
+            key=key,
+        )
+        for language, catalog in loaded.items():
+            fields = _template_fields(catalog[key], language=language, key=key)
+            if fields != expected_fields:
+                raise ValueError(
+                    f"Translation placeholder mismatch for {language}.{key}: "
+                    f"expected={sorted(expected_fields)}, actual={sorted(fields)}"
+                )
 
     _catalogs.clear()
     _catalogs.update(loaded)
