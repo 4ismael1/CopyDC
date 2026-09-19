@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import signal
 import sys
 from contextlib import suppress
 from pathlib import Path
@@ -171,16 +172,14 @@ class MyBot(commands.Bot):
                 try:
                     await self.load_extension(extension)
                     loaded += 1
-                    log.info(f"Modulo cargado: {extension}")
+                    log.debug(f"Modulo cargado: {extension}")
                 except Exception as exc:
                     log.error(f"Fallo al cargar {extension}: {exc}")
                     failures.append(extension)
             return loaded, failures
 
-        log.info("---------- MODULOS DE USUARIO ----------")
         user_loaded, user_failures = await load_cogs_from(USER_MODULES_DIR, "modules")
 
-        log.info("---------- MODULOS DE ADMIN ----------")
         admin_loaded, admin_failures = await load_cogs_from(ADMIN_MODULES_DIR, "admin_modules")
 
         if user_loaded == 0:
@@ -196,7 +195,6 @@ class MyBot(commands.Bot):
             log.warning("Módulos administrativos no disponibles: %s", ", ".join(admin_failures))
 
         log.info(f"Modulos listos | usuario={user_loaded} admin={admin_loaded}")
-        log.info("Todos los modulos han sido procesados.")
 
     async def sync_application_commands_once(self):
         if self._app_commands_synced:
@@ -210,7 +208,6 @@ class MyBot(commands.Bot):
             return
 
         self._app_commands_synced = True
-        log.info("Los comandos globales quedan disponibles para todos los servidores.")
 
     async def sync_guild_application_commands(
         self,
@@ -298,9 +295,14 @@ bot = MyBot()
 async def on_ready():
     await asyncio.to_thread(db.sync_guilds, bot.guilds)
     await bot.sync_application_commands_once()
-    log.info(f"Bot listo | Conectado como {bot.user}")
-    log.info(f"Presente en {len(bot.guilds)} servidores.")
-    log.info(f"Usuarios totales (suma de servidores): {total_users_all_guilds(bot)}")
+    unavailable = sum(guild.unavailable or guild.member_count is None for guild in bot.guilds)
+    log.info(
+        "Bot listo | %s | %s servidores | %s usuarios (suma por servidor)%s",
+        bot.user,
+        len(bot.guilds),
+        total_users_all_guilds(bot),
+        f" | Conteo parcial: {unavailable} servidores sin datos" if unavailable else "",
+    )
     await bot.apply_configured_presence()
 
 
@@ -314,8 +316,31 @@ async def on_guild_join(guild: discord.Guild):
 
 @bot.event
 async def on_guild_remove(guild: discord.Guild):
+    # Startup guild objects can be incomplete. Never purge settings based only
+    # on a nameless event while the gateway cache is still being populated.
+    uncertain = not bot.is_ready() or not guild.name
+    if uncertain:
+        await bot.wait_until_ready()
+        if bot.get_guild(guild.id) is not None:
+            return
+        try:
+            await bot.fetch_guild(guild.id)
+        except discord.NotFound:
+            pass  # REST confirms that this guild is no longer accessible.
+        except discord.HTTPException as exc:
+            log.warning(
+                "No se pudo verificar la salida del servidor %s (HTTP %s); se conserva su configuración.",
+                guild.id,
+                exc.status,
+            )
+            return
+        else:
+            return
     await asyncio.to_thread(db.remove_guild, guild)
     localization.remove_guild_mode(guild.id)
+    if uncertain:
+        log.debug("Salida confirmada durante la carga: servidor %s", guild.id)
+        return
     total = total_users_all_guilds(bot)
     log.info(
         f"Salio de {guild.name or 'servidor desconocido'} ({guild.id}) | "
@@ -488,9 +513,38 @@ async def main():
     if OWNER_ID <= 0:
         raise RuntimeError("OWNER_ID debe contener el ID numérico del propietario en el archivo .env")
 
-    async with bot:
-        await bot.start(BOT_TOKEN)
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    stopping = False
+    installed_signals = []
+
+    def request_stop():
+        nonlocal stopping
+        if not stopping:
+            stopping = True
+            log.info("Deteniendo Copy para apagado o reinicio...")
+            task.cancel()
+
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(signum, request_stop)
+        except (NotImplementedError, RuntimeError):
+            continue  # Windows uses asyncio.run's KeyboardInterrupt handling.
+        installed_signals.append(signum)
+
+    log.info("Iniciando Copy...")
+    try:
+        async with bot:
+            await bot.start(BOT_TOKEN)
+    except asyncio.CancelledError:
+        if not stopping:
+            raise
+    finally:
+        for signum in installed_signals:
+            loop.remove_signal_handler(signum)
+        log.info("Copy detenido.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    with suppress(KeyboardInterrupt):
+        asyncio.run(main())
