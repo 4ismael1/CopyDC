@@ -18,7 +18,7 @@ dev = [
 ]
 
 [tool.setuptools]
-py-modules = ["main", "database", "command_utils", "localization"]
+py-modules = ["main", "database", "command_utils", "localization", "role_transport"]
 
 [tool.setuptools.packages.find]
 where = ["."]

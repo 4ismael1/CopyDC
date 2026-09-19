@@ -15,6 +15,7 @@ from discord.ext import commands
 from command_utils import RestrictedView
 from database import delete_clantag_settings, get_clantag_settings, set_clantag_settings, setup_clantag_table
 from localization import get_language, translate, translate_language
+from role_transport import change_roles, http_error_summary, latest_role_event
 
 log = logging.getLogger("bot")
 
@@ -234,6 +235,7 @@ class ClanTagCog(commands.Cog):
     # ══════════════════════════════════════════════════════════
 
     @commands.Cog.listener()
+    @latest_role_event
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         """Detecta cuando un miembro cambia su clan tag."""
         if after.bot:
@@ -265,7 +267,7 @@ class ClanTagCog(commands.Cog):
         if has_clan and not has_role:
             try:
                 self._recent_actions[key] = {"action": "add", "time": now}
-                await after.add_roles(role, reason=f"Clan Tag: {clan_tag}")
+                await change_roles(after, role, add=True, reason=f"Clan Tag: {clan_tag}")
 
                 # Enviar embed
                 channel_id = settings.get("channel_id")
@@ -285,14 +287,14 @@ class ClanTagCog(commands.Cog):
                     "Discord rechazó la asignación de clan tag en guild=%s member=%s: %s",
                     after.guild.id,
                     after.id,
-                    exc,
+                    http_error_summary(exc),
                 )
 
         # Si no tiene el clan y tiene el rol → quitar rol
         elif not has_clan and has_role:
             try:
                 self._recent_actions[key] = {"action": "remove", "time": now}
-                await after.remove_roles(role, reason="Clan Tag removido")
+                await change_roles(after, role, add=False, reason="Clan Tag removido")
 
                 # Enviar embed de removido si está habilitado
                 if settings.get("remove_enabled"):
@@ -313,7 +315,7 @@ class ClanTagCog(commands.Cog):
                     "Discord rechazó el retiro de clan tag en guild=%s member=%s: %s",
                     after.guild.id,
                     after.id,
-                    exc,
+                    http_error_summary(exc),
                 )
 
     # ══════════════════════════════════════════════════════════

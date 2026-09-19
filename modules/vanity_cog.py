@@ -23,6 +23,7 @@ from database import (
     setup_vanity_table,
 )
 from localization import get_language, translate, translate_language
+from role_transport import change_roles, http_error_summary, latest_role_event
 
 log = logging.getLogger("bot")
 
@@ -217,6 +218,7 @@ class VanityCog(commands.Cog):
     # ══════════════════════════════════════════════════════════
 
     @commands.Cog.listener()
+    @latest_role_event
     async def on_presence_update(self, before: discord.Member, after: discord.Member):
         if after.bot:
             return
@@ -249,11 +251,11 @@ class VanityCog(commands.Cog):
                         old_role for old_role in current_vanity_roles if old_role.id != matched_role_id
                     ]
                     if stale_roles:
-                        await after.remove_roles(*stale_roles, reason="Cambió de vanity")
+                        await change_roles(after, *stale_roles, add=False, reason="Cambió de vanity")
 
                     role_was_added = role not in after.roles
                     if role_was_added:
-                        await after.add_roles(role, reason=f"Vanity: {matched_vanity}")
+                        await change_roles(after, role, add=True, reason=f"Vanity: {matched_vanity}")
 
                     if role_was_added and channel:
                         embed = self.build_embed(settings, after, matched_vanity, role, is_add=True)
@@ -269,7 +271,7 @@ class VanityCog(commands.Cog):
                         "Discord rechazó una operación de vanity en guild=%s member=%s: %s",
                         after.guild.id,
                         after.id,
-                        exc,
+                        http_error_summary(exc),
                     )
         else:
             # No tiene ninguna vanity → quitar roles de vanity
@@ -278,7 +280,7 @@ class VanityCog(commands.Cog):
                     vanity_for_role = next(
                         (vc["vanity_code"] for vc in vanity_codes if vc["role_id"] == role.id), "vanity"
                     )
-                    await after.remove_roles(role, reason="Vanity removida")
+                    await change_roles(after, role, add=False, reason="Vanity removida")
 
                     # Enviar embed de removido si está habilitado
                     if settings.get("remove_enabled"):
@@ -300,7 +302,7 @@ class VanityCog(commands.Cog):
                         "Discord rechazó el retiro de vanity en guild=%s member=%s: %s",
                         after.guild.id,
                         after.id,
-                        exc,
+                        http_error_summary(exc),
                     )
 
     # ══════════════════════════════════════════════════════════
