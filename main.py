@@ -172,7 +172,7 @@ class MyBot(commands.Bot):
                 try:
                     await self.load_extension(extension)
                     loaded += 1
-                    log.debug(f"Modulo cargado: {extension}")
+                    log.info("Modulo cargado: %s", extension)
                 except Exception as exc:
                     log.error(f"Fallo al cargar {extension}: {exc}")
                     failures.append(extension)
