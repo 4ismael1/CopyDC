@@ -60,6 +60,17 @@ def resolve_guild(bot: commands.Bot, query: str) -> discord.Guild | None:
     return matches[0]
 
 
+def search_guilds(bot: commands.Bot, query: str = "") -> list[discord.Guild]:
+    """No elige arbitrariamente entre servidores con nombres similares."""
+    query = query.strip().casefold()
+    guilds = list(bot.guilds)
+    if query.isdecimal():
+        guilds = [g for g in guilds if str(g.id) == query]
+    elif query:
+        guilds = [g for g in guilds if query in g.name.casefold()]
+    return sorted(guilds, key=lambda g: (g.name.casefold() != query, g.name.casefold(), g.id))
+
+
 def boost_bar(boosts: int, tier: int) -> str:
     # Aproximaciones decorativas a los tiers (no son límites exactos)
     steps = [2, 7, 14]  # Tier 1/2/3 aprox
@@ -123,7 +134,7 @@ def build_overview_embed(g: discord.Guild) -> discord.Embed:
     shard = getattr(g, "shard_id", None)
     locale = getattr(g, "preferred_locale", "N/D")
     owner = getattr(g, "owner", None)
-    owner_tag = f"{owner} ({owner.id})" if owner else "desconocido"
+    owner_tag = f"{owner} ({owner.id})" if owner else f"ID: {g.owner_id} (no está en caché)"
 
     e = discord.Embed(title=g.name, description=g.description or "", color=discord.Color.green())
     if g.icon:
@@ -142,7 +153,7 @@ def build_overview_embed(g: discord.Guild) -> discord.Embed:
         bots = sum(1 for m in g.members if m.bot)
     e.add_field(
         name="Miembros",
-        value=f"Total: {total if total is not None else 'N/D'}\n🙂 Humanos: {humans}\n🤖 Bots: {bots}",
+        value=f"Total: {total if total is not None else 'N/D'}\n🙂 Humanos en caché: {humans}\n🤖 Bots en caché: {bots}",
         inline=False,
     )
 
@@ -179,7 +190,7 @@ def build_people_channels_embed(g: discord.Guild) -> discord.Embed:
         bots = sum(1 for m in g.members if m.bot)
     e.add_field(
         name="Miembros",
-        value=f"👥 Total: {total if total is not None else 'N/D'}\n🙂 Humanos: {humans}\n🤖 Bots: {bots}",
+        value=f"👥 Total: {total if total is not None else 'N/D'}\n🙂 Humanos en caché: {humans}\n🤖 Bots en caché: {bots}",
         inline=False,
     )
 
@@ -214,7 +225,11 @@ def build_roles_emojis_embed(g: discord.Guild) -> discord.Embed:
     roles: list[discord.Role] = [r for r in g.roles if not r.is_default()]
     roles.sort(key=lambda r: r.position, reverse=True)
     preview = ", ".join([discord.utils.escape_markdown(r.name) for r in roles[:10]]) if roles else "—"
-    e.add_field(name="Roles", value=f"Total (sin @everyone): {len(roles)}\nTop 10: {preview}", inline=False)
+    e.add_field(
+        name="Roles",
+        value=trim(f"Total (sin @everyone): {len(roles)}\nTop 10: {preview}", 1024),
+        inline=False,
+    )
 
     e.add_field(name="Emojis", value=str(len(g.emojis)), inline=True)
     e.add_field(name="Stickers", value=str(len(getattr(g, "stickers", []))), inline=True)
@@ -243,7 +258,7 @@ def build_security_boosts_embed(g: discord.Guild) -> discord.Embed:
     e.add_field(name="Boosts", value=boost_bar(boosts, tier), inline=False)
 
     features = ", ".join(sorted(g.features)) if g.features else "—"
-    e.add_field(name="Features", value=features, inline=False)
+    e.add_field(name="Features", value=trim(features, 1024), inline=False)
     return e
 
 
@@ -255,6 +270,10 @@ def build_bot_perms_embed(g: discord.Guild) -> discord.Embed:
         return e
     p = me.guild_permissions
     checks = {
+        "administrator": p.administrator,
+        "view_channel": p.view_channel,
+        "send_messages": p.send_messages,
+        "manage_webhooks": p.manage_webhooks,
         "manage_guild": p.manage_guild,
         "manage_channels": p.manage_channels,
         "manage_roles": p.manage_roles,
@@ -295,7 +314,7 @@ class GuildInfoView(ui.View):
         bot: commands.Bot,
         guild_id: int,
         owner_id: int,
-        back_to_list: tuple[int, int] | None = None,
+        back_to_list: tuple[int, int, str] | None = None,
         timeout: int = 180,
     ):
         """
@@ -367,13 +386,8 @@ class GuildInfoView(ui.View):
 
     @ui.button(label="Volver a lista", style=discord.ButtonStyle.success, row=1)
     async def btn_back(self, interaction: discord.Interaction, button: ui.Button):
-        if not self.back_to_list:
-            await interaction.response.edit_message(
-                content="No hay lista previa.", embed=self.current_embed(), view=self
-            )
-            return
-        page_index, per_page = self.back_to_list
-        view = ServerListView(self.bot, self.owner_id, page_index=page_index, per_page=per_page)
+        page_index, per_page, query = self.back_to_list or (0, 10, "")
+        view = ServerListView(self.bot, self.owner_id, page_index=page_index, per_page=per_page, query=query)
         await interaction.response.edit_message(embed=view.build_list_embed(), view=view)
 
     @ui.button(label="Refrescar", style=discord.ButtonStyle.secondary, row=1)
@@ -394,13 +408,14 @@ class GuildInfoView(ui.View):
 
 
 class ServerSelect(ui.Select):
-    def __init__(self, bot: commands.Bot, owner_id: int, page_index: int, per_page: int):
+    def __init__(self, bot: commands.Bot, owner_id: int, page_index: int, per_page: int, query: str = ""):
         self.bot = bot
         self.owner_id = owner_id
         self.page_index = page_index
         self.per_page = per_page
+        self.query = query
 
-        guilds = sorted(bot.guilds, key=lambda g: g.id)
+        guilds = search_guilds(bot, query)
         start = page_index * per_page
         chunk = guilds[start : start + per_page]
 
@@ -410,7 +425,14 @@ class ServerSelect(ui.Select):
             desc = f"ID: {g.id} | 👥 {getattr(g, 'member_count', 'N/D')}"
             options.append(discord.SelectOption(label=label, description=trim(desc, 100), value=str(g.id)))
 
-        super().__init__(placeholder="Selecciona un servidor…", min_values=1, max_values=1, options=options)
+        super().__init__(
+            placeholder="Selecciona un servidor…" if options else "Sin resultados",
+            min_values=1,
+            max_values=1,
+            row=2,
+            disabled=not options,
+            options=options or [discord.SelectOption(label="Sin resultados", value="none")],
+        )
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id != self.owner_id:
@@ -419,26 +441,64 @@ class ServerSelect(ui.Select):
             )
             return
         guild_id = int(self.values[0])
-        view = GuildInfoView(self.bot, guild_id, self.owner_id, back_to_list=(self.page_index, self.per_page))
+        view = GuildInfoView(
+            self.bot, guild_id, self.owner_id, back_to_list=(self.page_index, self.per_page, self.query)
+        )
         await interaction.response.edit_message(embed=view.current_embed(), view=view)
+
+
+class ServerSearchModal(ui.Modal, title="Buscar servidor"):
+    query = ui.TextInput(label="ID o parte del nombre", required=False, max_length=100)
+
+    def __init__(self, bot: commands.Bot, owner_id: int):
+        super().__init__()
+        self.bot = bot
+        self.owner_id = owner_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Solo el owner puede buscar.", ephemeral=True)
+            return
+        view = ServerListView(self.bot, self.owner_id, query=self.query.value)
+        await interaction.response.edit_message(embed=view.build_list_embed(), view=view)
 
 
 class ServerListView(ui.View):
     def __init__(
-        self, bot: commands.Bot, owner_id: int, page_index: int = 0, per_page: int = 25, timeout: int = 180
+        self,
+        bot: commands.Bot,
+        owner_id: int,
+        page_index: int = 0,
+        per_page: int = 10,
+        timeout: int = 180,
+        query: str = "",
     ):
         super().__init__(timeout=timeout)
         self.bot = bot
         self.owner_id = owner_id
         self.page_index = page_index
-        self.per_page = max(1, min(per_page, 25))  # Select soporta hasta 25 opciones
+        self.query = query.strip()
+        self.per_page = max(1, min(per_page, 10))  # Mantiene el embed por debajo de 6000 caracteres.
+        self.page_index = min(max(page_index, 0), self.total_pages() - 1)
         # Añadimos el Select dinámicamente
-        self.select = ServerSelect(bot, owner_id, page_index, self.per_page)
+        self.select = ServerSelect(bot, owner_id, self.page_index, self.per_page, self.query)
         self.add_item(self.select)
+        self.update_navigation()
 
     def total_pages(self) -> int:
-        total = len(self.bot.guilds)
+        total = len(search_guilds(self.bot, self.query))
         return max(1, math.ceil(total / self.per_page))
+
+    def update_navigation(self):
+        self.prev_page.disabled = self.page_index == 0
+        self.next_page.disabled = self.page_index >= self.total_pages() - 1
+
+    def refresh(self):
+        self.page_index = min(max(0, self.page_index), self.total_pages() - 1)
+        self.remove_item(self.select)
+        self.select = ServerSelect(self.bot, self.owner_id, self.page_index, self.per_page, self.query)
+        self.add_item(self.select)
+        self.update_navigation()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -449,12 +509,14 @@ class ServerListView(ui.View):
         return True
 
     def build_list_embed(self) -> discord.Embed:
-        guilds = sorted(self.bot.guilds, key=lambda g: g.id)
+        guilds = search_guilds(self.bot, self.query)
         total = len(guilds)
         start = self.page_index * self.per_page
         chunk = guilds[start : start + self.per_page]
 
         e = discord.Embed(title=f"Servidores ({total})", color=discord.Color.blurple())
+        if self.query:
+            e.description = f"Búsqueda: {discord.utils.escape_markdown(trim(self.query, 100))}"
         if not chunk:
             e.description = "_No hay servidores en esta página._"
         else:
@@ -468,7 +530,7 @@ class ServerListView(ui.View):
                     f"👥 {member_count} miembros\n"
                     f"🗓️ {discord.utils.format_dt(g.created_at, style='d')}"
                 )
-                e.add_field(name=discord.utils.escape_markdown(g.name), value=value, inline=False)
+                e.add_field(name=trim(discord.utils.escape_markdown(g.name), 200), value=value, inline=False)
 
         e.set_footer(
             text=f"Página {self.page_index + 1}/{self.total_pages()} • Selecciona un servidor en el menú para ver su ficha"
@@ -478,25 +540,30 @@ class ServerListView(ui.View):
     # ⬇⬇⬇ Firmas correctas y sin clear_items(): reemplazamos solo el Select
     @ui.button(emoji="◀️", style=discord.ButtonStyle.secondary)
     async def prev_page(self, interaction: discord.Interaction, button: ui.Button):
-        self.page_index = (self.page_index - 1) % self.total_pages()
-        self.remove_item(self.select)
-        self.select = ServerSelect(self.bot, self.owner_id, self.page_index, self.per_page)
-        self.add_item(self.select)
+        self.page_index -= 1
+        self.refresh()
         await interaction.response.edit_message(embed=self.build_list_embed(), view=self)
 
     @ui.button(emoji="▶️", style=discord.ButtonStyle.secondary)
     async def next_page(self, interaction: discord.Interaction, button: ui.Button):
-        self.page_index = (self.page_index + 1) % self.total_pages()
-        self.remove_item(self.select)
-        self.select = ServerSelect(self.bot, self.owner_id, self.page_index, self.per_page)
-        self.add_item(self.select)
+        self.page_index += 1
+        self.refresh()
         await interaction.response.edit_message(embed=self.build_list_embed(), view=self)
 
     @ui.button(label="Refrescar", style=discord.ButtonStyle.secondary, row=1)
     async def refresh_btn(self, interaction: discord.Interaction, button: ui.Button):
-        self.remove_item(self.select)
-        self.select = ServerSelect(self.bot, self.owner_id, self.page_index, self.per_page)
-        self.add_item(self.select)
+        self.refresh()
+        await interaction.response.edit_message(embed=self.build_list_embed(), view=self)
+
+    @ui.button(label="Buscar", style=discord.ButtonStyle.primary, row=1)
+    async def search_btn(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.response.send_modal(ServerSearchModal(self.bot, self.owner_id))
+
+    @ui.button(label="Todos", style=discord.ButtonStyle.secondary, row=1)
+    async def all_btn(self, interaction: discord.Interaction, button: ui.Button):
+        self.query = ""
+        self.page_index = 0
+        self.refresh()
         await interaction.response.edit_message(embed=self.build_list_embed(), view=self)
 
     @ui.button(label="Cerrar", style=discord.ButtonStyle.danger, row=1)
@@ -523,9 +590,9 @@ class OwnerCog(commands.Cog):
 
     @commands.group(name="servers", invoke_without_command=True)
     @owner_only()
-    async def servers_group(self, ctx: commands.Context):
-        """Abre la lista interactiva (página 1)."""
-        view = ServerListView(self.bot, OWNER_ID, page_index=0, per_page=25)
+    async def servers_group(self, ctx: commands.Context, *, query: str = ""):
+        """Lista interactiva; acepta ID o parte del nombre."""
+        view = ServerListView(self.bot, OWNER_ID, query=query)
         await ctx.reply(embed=view.build_list_embed(), view=view, mention_author=False)
 
     @servers_group.command(name="list")
@@ -540,12 +607,17 @@ class OwnerCog(commands.Cog):
     @owner_only()
     async def info_cmd(self, ctx: commands.Context, *, guild_query: str):
         """Abre la ficha del servidor (con pestañas)."""
-        g = resolve_guild(self.bot, guild_query)
-        if not g:
+        matches = search_guilds(self.bot, guild_query)
+        if not matches:
             await ctx.reply("No encontré ese servidor por ID o nombre.", mention_author=False)
             return
-        view = GuildInfoView(self.bot, g.id, OWNER_ID)
-        await ctx.reply(embed=view.current_embed(), view=view, mention_author=False)
+        if len(matches) == 1:
+            view = GuildInfoView(self.bot, matches[0].id, OWNER_ID)
+            embed = view.current_embed()
+        else:
+            view = ServerListView(self.bot, OWNER_ID, query=guild_query)
+            embed = view.build_list_embed()
+        await ctx.reply(embed=embed, view=view, mention_author=False)
 
     @servers_group.command(name="configured", aliases=["configs"])
     @owner_only()

@@ -111,6 +111,55 @@ la asignación se elimina. No se crea un historial de presencia.
 La base de datos `bot_database.db` se crea o actualiza automáticamente en la
 raíz del proyecto. El archivo está excluido de Git.
 
+## Panel de servidores (solo propietario de Copy)
+
+- `c!servers`: lista paginada con selector, búsqueda, refresco y navegación.
+- `c!servers ID` o `c!servers parte del nombre`: filtra sin distinguir mayúsculas.
+- `c!servers info nombre`: muestra la ficha si hay un resultado, o un selector si hay varios.
+- Las pestañas mantienen resumen, miembros/canales, roles/emojis, seguridad/Nitro y permisos.
+- Al volver de una ficha se conserva la búsqueda y página. Los conteos de humanos/bots son de caché.
+
+## Espejo experimental (solo mensajes del propietario)
+
+**Úsalo únicamente en servidores de prueba propios. El setup destruye los canales y
+el historial del DESTINO, incluidos sus hilos. No hay recuperación automática.**
+
+1. Copy debe estar en ambos servidores, y su propietario configurado debe ser dueño de ambos.
+2. El destino debe tener Comunidad desactivada y Copy debe tener Administrador allí.
+   En el origen requiere ver canales y leer historial; Message Content debe estar habilitado.
+3. Desde el **destino**, ejecuta `c!mirror setup ID_ORIGEN`.
+4. Revisa el inventario adjunto, pulsa el botón y escribe el ID del **destino** para confirmar.
+5. Se reemplazan sus canales por categorías, texto y voz del origen. No se copian roles,
+   permisos, historial, hilos, foros o escenarios. Los permisos del destino se heredan;
+   no introduzcas otros participantes sin revisar sus accesos.
+
+Se replican únicamente mensajes nuevos del propietario, ignorando bots y webhooks.
+El origen es de solo lectura: no se crean webhooks allí, no se envían respuestas ni se
+modifican canales o mensajes. Las acciones administrativas del destino sí aparecen en
+su auditoría; esto no desactiva auditorías, registros ajenos ni registros internos de Discord.
+
+Las ediciones actualizan la copia. Los borrados, incluidos los masivos, conservan el
+contenido y adjuntos copiados y añaden una marca. Se dividen textos largos sin truncarlos.
+Se intenta copiar adjuntos con un máximo total de 25 MiB por mensaje y respetando el
+límite del destino. Los archivos no copiados se indican; no se archivan tarjetas enriquecidas.
+Las menciones se envían sin notificar. Las respuestas muestran el ID del mensaje referido.
+No se transmite audio, no se sincronizan posteriores cambios de estructura ni se importa historial.
+
+Controles desde el destino:
+
+- `c!mirror status`: estado y canales enlazados.
+- `c!mirror pause` / `c!mirror resume`: pausar/reanudar.
+- `c!mirror stop`: desconectar sin borrar las copias, canales ni webhooks existentes.
+  Permite volver a ejecutar setup, con otra confirmación destructiva.
+
+La base de datos guarda configuración e IDs de canales/webhooks/mensajes, no contenido
+ni tokens de webhooks. Los archivos se procesan temporalmente en memoria. Reiniciar
+conserva las relaciones ya guardadas, pero no hay recuperación de eventos perdidos
+durante pausas, apagados o fallos ni garantía de entrega exactamente una vez. Una cola
+llena o un fallo de réplica pausa el espejo y deja un aviso técnico sin contenido/tokens
+en consola. Una configuración interrumpida queda en `error`: revisa el destino y usa
+`stop` antes de repetir `setup`. No se continúa borrando automáticamente al reiniciar.
+
 ## Desarrollo
 
 Instala las dependencias de desarrollo:
