@@ -13,6 +13,7 @@ from admin_modules.mirror_cog import (
     MirrorStore,
     marker,
     message_parts,
+    safe_username,
     permitted_message,
 )
 
@@ -412,3 +413,21 @@ async def test_reply_to_unknown_message_has_no_link(store):
     msg.reference = SimpleNamespace(message_id=5, resolved=None, type=None)
     header = await cog.reply_header(msg, pair())
     assert "no disponible" in header and "discord.com" not in header
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("Ana", "Ana"),
+        ("discordia", "d​iscordia"),
+        ("Clyde", "C​lyde"),
+        ("everyone", "Usuario del espejo"),
+        ("   ", "Usuario del espejo"),
+        ("x" * 100, "x" * 80),
+    ],
+)
+def test_safe_username_blocks_webhook_rejections(raw, expected):
+    result = safe_username(raw)
+    assert result == expected
+    assert 1 <= len(result) <= 80
+    assert "discord" not in result.lower() and "clyde" not in result.lower()

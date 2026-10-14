@@ -94,6 +94,18 @@ def message_parts(message, header=""):
     return [content[i : i + 2000] for i in range(0, len(content), 2000)] or [""]
 
 
+def safe_username(name):
+    # Discord rechaza nombres de webhook con "discord"/"clyde" o iguales a "everyone"/"here".
+    # Con réplica de todos los usuarios, un apodo así no debe poder romper el espejo.
+    clean = (name or "").strip()[:80]
+    for banned in ("discord", "clyde"):
+        clean = clean.replace(banned, banned[0] + "​" + banned[1:])
+        clean = clean.replace(banned.title(), banned[0].upper() + "​" + banned[1:])
+    if clean.lower() in ("", "everyone", "here"):
+        clean = "Usuario del espejo"
+    return clean[:80]
+
+
 def marker(message_id, *, edited=False, deleted=False, notes=""):
     if not edited and not deleted and not notes:
         return None
@@ -749,7 +761,7 @@ class MirrorCog(commands.Cog):
                         content=content or None,
                         embed=embed,
                         files=files if index == 0 else [],
-                        username=message.author.display_name[:80],
+                        username=safe_username(message.author.display_name),
                         avatar_url=str(message.author.display_avatar.url),
                         allowed_mentions=discord.AllowedMentions.none(),
                         wait=True,
