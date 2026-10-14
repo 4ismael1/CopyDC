@@ -111,6 +111,14 @@ la asignación se elimina. No se crea un historial de presencia.
 La base de datos `bot_database.db` se crea o actualiza automáticamente en la
 raíz del proyecto. El archivo está excluido de Git.
 
+## Panel de servidores (solo propietario de Copy)
+
+- `c!servers`: lista paginada con selector, búsqueda, refresco y navegación.
+- `c!servers ID` o `c!servers parte del nombre`: filtra sin distinguir mayúsculas.
+- `c!servers info nombre`: muestra la ficha si hay un resultado, o un selector si hay varios.
+- Las pestañas mantienen resumen, miembros/canales, roles/emojis, seguridad/Nitro y permisos.
+- Al volver de una ficha se conserva la búsqueda y página. Los conteos de humanos/bots son de caché.
+
 ## Desarrollo
 
 Instala las dependencias de desarrollo:
