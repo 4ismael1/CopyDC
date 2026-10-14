@@ -1,17 +1,21 @@
 # modules/expression_cog.py
+import asyncio
 import io
 import logging
 import os
 import random
 import re
 import string
+from contextlib import closing, suppress
 
 import aiohttp
 import discord
 from discord.ext import commands
 from PIL import Image, ImageOps
 
+from command_utils import RestrictedView
 from localization import translate
+from sticker_processing import PreparedSticker, StickerProcessingError, prepare_sticker_attachment
 
 log = logging.getLogger("bot")
 
@@ -187,17 +191,90 @@ def describe_processing_error(source, exc: ValueError) -> str:
     return translate(source, "expression.processing_error")
 
 
+class StickerPreview(RestrictedView):
+    """Only the requester can approve a potentially poor result; no upload on timeout."""
+
+    def __init__(self, cog, ctx, ref, name, prepared):
+        super().__init__(author_id=ctx.author.id, timeout=180, required_permissions=("manage_expressions",))
+        self.cog, self.ctx, self.ref, self.name = cog, ctx, ref, name
+        self.prepared = prepared
+        self.message = None
+        self.confirm.label = translate(ctx, "expression.sticker_confirm")
+        self.cancel.label = translate(ctx, "expression.sticker_cancel")
+
+    def finish(self):
+        self.prepared = None
+        self.disable_all_items()
+        self.stop()
+        key = (self.ctx.guild.id, self.ctx.author.id)
+        if self.cog.sticker_previews.get(key) is self:
+            self.cog.sticker_previews.pop(key, None)
+
+    async def interaction_check(self, interaction):
+        if not await super().interaction_check(interaction):
+            return False
+        if self.prepared is None:
+            await interaction.response.send_message(
+                translate(interaction, "expression.sticker_preview_expired"), ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(style=discord.ButtonStyle.primary)
+    async def confirm(self, interaction, button):
+        # Consume before the first await to avoid duplicate uploads on double click.
+        prepared = self.prepared
+        if prepared is None:
+            await interaction.response.send_message(
+                translate(interaction, "expression.sticker_preview_expired"), ephemeral=True
+            )
+            return
+        self.finish()
+        await interaction.response.edit_message(
+            content=translate(interaction, "expression.sticker_uploading"), view=self
+        )
+        uploaded = await self.cog.upload_prepared_sticker(
+            self.ctx, self.ref, self.name, prepared, interaction.user
+        )
+        with suppress(discord.HTTPException):
+            await interaction.edit_original_response(
+                content=translate(interaction, "expression.sticker_preview_done")
+                if uploaded
+                else translate(interaction, "expression.upload_failed", kind="sticker"),
+                view=self,
+            )
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction, button):
+        self.finish()
+        await interaction.response.edit_message(
+            content=translate(interaction, "expression.sticker_cancelled"), view=self
+        )
+
+    async def on_timeout(self):
+        self.finish()
+        if self.message:
+            with suppress(discord.HTTPException):
+                await self.message.edit(
+                    content=translate(self.ctx, "expression.sticker_preview_expired"), view=self
+                )
+
+
 # ────────────── COG DE EXPRESIONES ──────────────
 class ExpressionCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.session: aiohttp.ClientSession | None = None
+        self.sticker_processing = asyncio.Semaphore(1)
+        self.sticker_previews = {}
 
     async def cog_load(self):
         timeout = aiohttp.ClientTimeout(total=20, connect=8, sock_read=15)
         self.session = aiohttp.ClientSession(timeout=timeout)
 
     async def cog_unload(self):
+        for view in list(self.sticker_previews.values()):
+            await view.on_timeout()
         if self.session is not None and not self.session.closed:
             await self.session.close()
 
@@ -217,6 +294,87 @@ class ExpressionCog(commands.Cog):
                 f"El archivo supera el límite de entrada de {MAX_INPUT_BYTES // (1024 * 1024)} MB."
             )
         return await attachment.read()
+
+    async def convert_sticker_attachment(self, attachment):
+        async with self.sticker_processing:
+            data = await self._read_attachment(attachment)
+            # The thread owns the semaphore until finished, even if the command is cancelled.
+            task = asyncio.create_task(asyncio.to_thread(prepare_sticker_attachment, data))
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                with suppress(Exception):
+                    await task
+                raise
+
+    async def upload_prepared_sticker(self, ctx, ref, name, prepared: PreparedSticker, requester):
+        if not has_expr_perm(requester):
+            await ctx.reply(translate(ctx, "expression.permission"), mention_author=False)
+            return False
+        try:
+            with closing(
+                discord.File(io.BytesIO(prepared.data), filename=f"{name}{prepared.extension}")
+            ) as upload:
+                sticker = await ctx.guild.create_sticker(
+                    name=name, description="Agregado por bot", emoji="🙂", file=upload
+                )
+        except discord.HTTPException as exc:
+            await ctx.reply(describe_expression_upload_error(ctx, exc, "sticker"), mention_author=False)
+            return False
+        except Exception as exc:
+            log.warning("No se pudo crear el sticker | tipo=%s", type(exc).__name__)
+            await ctx.reply(translate(ctx, "expression.upload_failed", kind="sticker"), mention_author=False)
+            return False
+        # Notification failures must not be reported as an upload failure or cause a second upload.
+        notice = translate(
+            ctx, "expression.added_sticker", name=sticker.name, note=" 🛠️" if prepared.changed else ""
+        )
+        try:
+            await ref.reply(notice, mention_author=False, allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            with suppress(discord.HTTPException):
+                await ctx.send(notice, allowed_mentions=discord.AllowedMentions.none())
+        return True
+
+    async def preview_sticker(self, ctx, ref, name, prepared):
+        key = (ctx.guild.id, ctx.author.id)
+        previous = self.sticker_previews.get(key)
+        if previous:
+            await previous.on_timeout()
+        if len(self.sticker_previews) >= 32:
+            await ctx.reply(translate(ctx, "expression.sticker_busy"), mention_author=False)
+            return
+        view = StickerPreview(self, ctx, ref, name, prepared)
+        self.sticker_previews[key] = view
+        warnings = "\n".join(translate(ctx, warning) for warning in prepared.warnings)
+        if prepared.animated:
+            warnings += "\n" + translate(ctx, "expression.sticker_animation_preview")
+        embed = discord.Embed(
+            title=translate(ctx, "expression.sticker_preview_title"),
+            description=warnings,
+            color=discord.Color.orange(),
+        )
+        embed.add_field(
+            name=translate(ctx, "expression.sticker_preview_details"),
+            value=translate(
+                ctx,
+                "expression.sticker_preview_dimensions",
+                width=prepared.content_size[0],
+                height=prepared.content_size[1],
+                size=round(len(prepared.data) / 1024, 1),
+            ),
+            inline=False,
+        )
+        embed.set_image(url="attachment://sticker-preview.png")
+        embed.set_footer(text=translate(ctx, "expression.sticker_preview_footer"))
+        try:
+            with closing(
+                discord.File(io.BytesIO(prepared.preview), filename="sticker-preview.png")
+            ) as preview:
+                view.message = await ctx.reply(embed=embed, file=preview, view=view, mention_author=False)
+        except Exception:
+            view.finish()
+            raise
 
     # ... (los comandos 'copy', 'emoji', 'sticker' no cambian) ...
     @commands.command()
@@ -476,37 +634,20 @@ class ExpressionCog(commands.Cog):
             )
             return
 
-        try:
-            data = await self._read_attachment(att)
-        except ValueError as exc:
-            await ctx.reply(describe_processing_error(ctx, exc), mention_author=False)
-            return
         base_name = os.path.splitext(att.filename)[0]
         new_name = sanitize(nombre or base_name, max_len=30, prefix="stk")
 
+        if self.sticker_processing.locked():
+            await ctx.reply(translate(ctx, "expression.sticker_busy"), mention_author=False)
+            return
         try:
-            data, extension, compressed = compress_static_image_for_discord(
-                data,
-                max_bytes=STICKER_MAX_BYTES,
-                max_side=STICKER_MAX_SIDE,
-                square_canvas=True,
-            )
-            new_sticker = await ctx.guild.create_sticker(
-                name=new_name,
-                description="Agregado por bot",
-                emoji="🙂",
-                file=discord.File(io.BytesIO(data), filename=f"{new_name}{extension}"),
-            )
-            note = " 🛠️" if compressed else ""
-            await ref.reply(
-                translate(
-                    ctx,
-                    "expression.added_sticker",
-                    name=new_sticker.name,
-                    note=note,
-                ),
-                mention_author=False,
-            )
+            prepared = await self.convert_sticker_attachment(att)
+            if prepared.warnings:
+                await self.preview_sticker(ctx, ref, new_name, prepared)
+            else:
+                await self.upload_prepared_sticker(ctx, ref, new_name, prepared, ctx.author)
+        except StickerProcessingError as exc:
+            await ctx.reply(translate(ctx, exc.key), mention_author=False)
         except ValueError as e:
             await ctx.reply(describe_processing_error(ctx, e), mention_author=False)
         except discord.HTTPException as e:

@@ -84,6 +84,28 @@ Después inicia el bot:
 python main.py
 ```
 
+## Convertir una imagen en sticker
+
+Responde a una imagen adjunta con `c!sticker [nombre]` (alias `stickers` / `stk`).
+Esta conversión no cambia `c!emoji` ni `c!copy` de emojis/stickers ya existentes.
+
+- Recorta únicamente márgenes completamente transparentes; no elimina fondos blancos,
+  sombras ni contenido semitransparente para llenar el lienzo.
+- Ajusta el dibujo proporcionalmente dentro de 320×320, sin deformarlo. No reduce
+  sucesivamente el dibujo ni los colores para forzar el límite de 512 KiB.
+- Si exige más de 2× ampliación, queda muy estrecho/pequeño o casi invisible,
+  muestra una vista previa y requiere confirmación antes de crear el sticker.
+  La evaluación del tamaño visible es orientativa, no una garantía de nitidez.
+- Solo quien ejecutó el comando puede confirmar, conservando el permiso Gestionar
+  expresiones. Cancelar o dejar pasar 3 minutos no crea nada. Una vista previa
+  nueva del mismo usuario en el mismo servidor reemplaza la anterior.
+- Las animaciones GIF/APNG válidas se conservan byte por byte. Se comprueban
+  dimensiones 320×320, peso hasta 512 KiB y duración de hasta 5 segundos.
+  El límite local de validación es de 300 fotogramas. Las animaciones incompatibles
+  se rechazan con instrucciones, sin convertirlas en imágenes fijas.
+- El procesamiento se ejecuta fuera del bucle principal, una conversión a la vez,
+  con límites de 8 MiB de entrada y 25 millones de píxeles.
+
 ## Casos de soporte
 
 1. Crea una categoría para los casos, un rol para el equipo y un canal de
