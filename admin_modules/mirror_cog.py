@@ -94,15 +94,12 @@ def message_parts(message):
 
 
 def marker(message_id, *, edited=False, deleted=False, notes=""):
-    state = (
-        "🗑️ Mensaje eliminado en origen"
-        if deleted
-        else "✏️ Editado en origen"
-        if edited
-        else "Copia experimental"
-    )
+    if not edited and not deleted and not notes:
+        return None
+    state = "🗑️ Mensaje eliminado en origen" if deleted else "✏️ Editado en origen" if edited else None
     embed = discord.Embed(description=notes[:3000] or None, color=discord.Color.blurple())
-    embed.set_footer(text=f"{state} · ID original: {message_id}")
+    if state:
+        embed.set_footer(text=state)
     return embed
 
 
@@ -169,6 +166,7 @@ class MirrorCog(commands.Cog):
         self.setup_lock = asyncio.Lock()
         self.operation_lock = asyncio.Lock()
         self.worker = None
+        self.history_tasks = {}
 
     async def cog_load(self):
         await asyncio.to_thread(self.store.init)
@@ -176,6 +174,11 @@ class MirrorCog(commands.Cog):
         self.worker = asyncio.create_task(self.work(), name="copy-mirror")
 
     async def cog_unload(self):
+        tasks = list(self.history_tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         if self.worker:
             self.worker.cancel()
             with suppress(asyncio.CancelledError):
@@ -227,6 +230,7 @@ class MirrorCog(commands.Cog):
             "Elimina TODOS los canales/categorías del destino tras confirmar su ID; el historial no es recuperable.\n"
             "Clona categorías, texto y voz (sin audio). No copia roles, permisos, historial, hilos, foros ni escenarios.\n"
             "Ignora bots/webhooks. Conserva las copias borradas en origen.\n"
+            "Historial: `c!mirror history CANTIDAD` (1–1000 mensajes tuyos por canal); `c!mirror historycancel`.\n"
             "Controles: `c!mirror status`, `c!mirror pause`, `c!mirror resume`, `c!mirror stop`.",
             mention_author=False,
         )
@@ -382,7 +386,9 @@ class MirrorCog(commands.Cog):
         await ctx.reply(
             f"Origen: `{pair['source']}` → destino: `{pair['destination']}`\n"
             f"Estado: **{pair['state']}** · canales de texto enlazados: {len(channels)} · cola: {self.queue.qsize()}\n"
-            "Solo mensajes del propietario. Sin historial ni recuperación de eventos perdidos durante apagados/pausas. "
+            f"Importación de historial: {'en curso' if ctx.guild.id in self.history_tasks else 'inactiva'}.\n"
+            "Solo mensajes del propietario. Historial manual: `c!mirror history CANTIDAD`. "
+            "Sin recuperación automática de eventos perdidos durante apagados/pausas. "
             "Si una configuración falló, usa stop antes de repetir setup.",
             mention_author=False,
         )
@@ -407,6 +413,8 @@ class MirrorCog(commands.Cog):
                 return
             await asyncio.to_thread(self.store.state, pair["source"], state)
             await self.reload_pairs()
+            if state in {"paused", "stopped"} and ctx.guild.id in self.history_tasks:
+                self.history_tasks[ctx.guild.id].cancel_requested = True
         await ctx.reply(
             f"Espejo: **{state}**. Las copias y canales existentes se conservan.", mention_author=False
         )
@@ -428,6 +436,143 @@ class MirrorCog(commands.Cog):
     @commands.guild_only()
     async def stop(self, ctx):
         await self.set_state(ctx, "stopped")
+
+    def history_pair(self, source, destination):
+        pair = self.pairs.get(source)
+        original = self.bot.get_guild(source)
+        target = self.bot.get_guild(destination)
+        if (
+            not pair
+            or pair["destination"] != destination
+            or pair["state"] != "active"
+            or not original
+            or not target
+            or original.owner_id != pair["owner"]
+            or target.owner_id != pair["owner"]
+        ):
+            raise ValueError("El espejo ya no está activo o cambió su propietario/destino.")
+        return pair
+
+    @mirror.command(name="history", aliases=["historial"])
+    @commands.is_owner()
+    @commands.guild_only()
+    async def history(self, ctx, amount: int):
+        if not 1 <= amount <= 1000:
+            await ctx.reply(
+                "Indica entre 1 y 1000 mensajes tuyos por canal y ejecución.", mention_author=False
+            )
+            return
+        destination = ctx.guild.id
+        pair = self.destination_pair(destination)
+        if not pair or pair["state"] != "active":
+            await ctx.reply("Ejecuta esto en el destino de un espejo activo.", mention_author=False)
+            return
+        if destination in self.history_tasks:
+            await ctx.reply(
+                "Ya hay una importación en curso. Usa `c!mirror historycancel` para cancelarla.",
+                mention_author=False,
+            )
+            return
+        # Sin await entre comprobación y reserva: dos comandos simultáneos no crean dos trabajos.
+        self.history_tasks[destination] = asyncio.create_task(
+            self.import_history(ctx, pair["source"], destination, amount),
+            name=f"mirror-history-{destination}",
+        )
+
+    @mirror.command(name="historycancel")
+    @commands.is_owner()
+    @commands.guild_only()
+    async def history_cancel(self, ctx):
+        task = self.history_tasks.get(ctx.guild.id)
+        if not task:
+            await ctx.reply("No hay una importación en curso.", mention_author=False)
+            return
+        # Cancelación cooperativa: no interrumpir entre el envío y el guardado de su ID.
+        task.cancel_requested = True
+        await ctx.reply(
+            "Cancelación solicitada; terminará el mensaje en curso. Se conservan las copias.",
+            mention_author=False,
+        )
+
+    async def collect_history_ids(self, channel, pair, amount, cutoff, check):
+        ids = []
+        async for message in channel.history(limit=None, before=cutoff, oldest_first=False):
+            check()
+            if permitted_message(message, pair):
+                ids.append(message.id)
+                if len(ids) >= amount:
+                    break
+        return list(reversed(ids))
+
+    async def import_history(self, ctx, source, destination, amount):
+        copied = skipped = channels_done = 0
+        result = "Importación terminada"
+        task = asyncio.current_task()
+        cutoff = discord.utils.utcnow()
+
+        def check():
+            if getattr(task, "cancel_requested", False):
+                raise ValueError("Importación cancelada")
+            return self.history_pair(source, destination)
+
+        try:
+            await ctx.send(
+                f"Importando hasta {amount} mensajes tuyos recientes por canal enlazado, sin bots/webhooks "
+                "ni duplicados. Se añaden al final del destino: Discord no permite insertarlos antes de las copias existentes. "
+                "Puedes cancelar con `c!mirror historycancel`.",
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            pair = check()
+            channels = await asyncio.to_thread(
+                self.store.rows, "SELECT * FROM mirror_channels WHERE source=?", (source,)
+            )
+            for mapping in channels:
+                check()
+                channel = self.bot.get_channel(mapping["source_channel"])
+                if not isinstance(channel, discord.TextChannel):
+                    continue
+                ids = await self.collect_history_ids(channel, pair, amount, cutoff, check)
+                for message_id in ids:
+                    check()
+                    # El mismo lock que usa la réplica en vivo evita carreras y duplicados.
+                    async with self.operation_lock:
+                        pair = check()
+                        if await asyncio.to_thread(self.store.messages, message_id):
+                            skipped += 1
+                            continue
+                        try:
+                            message = await channel.fetch_message(message_id)
+                        except discord.NotFound:
+                            skipped += 1
+                            continue
+                        if await self.replicate(message, pair, edited=False):
+                            copied += 1
+                        else:
+                            skipped += 1
+                    await asyncio.sleep(0)  # Cede el turno a los eventos en vivo.
+                channels_done += 1
+                await ctx.send(
+                    f"Historial: {channels_done}/{len(channels)} canales · {copied} copiados · {skipped} omitidos."
+                )
+        except ValueError as exc:
+            result = str(exc)
+        except asyncio.CancelledError:
+            result = "Importación interrumpida al descargar el módulo"
+            raise
+        except Exception as exc:
+            result = "Importación interrumpida por un error; las copias completadas se conservan"
+            log.warning(
+                "Mirror historial falló | origen=%s | tipo=%s | HTTP=%s",
+                source,
+                type(exc).__name__,
+                getattr(exc, "status", "—"),
+            )
+        finally:
+            self.history_tasks.pop(destination, None)
+            with suppress(discord.HTTPException):
+                await ctx.send(
+                    f"{result}. {copied} mensajes copiados; {skipped} omitidos (ya copiados/no disponibles)."
+                )
 
     async def enqueue(self, source, kind, payload):
         pair = self.pairs.get(source)
@@ -525,13 +670,13 @@ class MirrorCog(commands.Cog):
 
     async def replicate(self, message, pair, *, edited):
         if not permitted_message(message, pair):
-            return
+            return False
         channel = await asyncio.to_thread(self.store.channel, message.channel.id)
         if not channel:
-            return
+            return False
         existing = await asyncio.to_thread(self.store.messages, message.id)
         if existing and not edited:
-            return
+            return False
         webhook = await self.webhook(channel)
         parts = message_parts(message)
         files = []
@@ -561,7 +706,8 @@ class MirrorCog(commands.Cog):
                     )
             for index, content in enumerate(parts):
                 embed = marker(message.id, edited=edited, notes="\n".join(notes) if index == 0 else "")
-                embed.timestamp = message.created_at
+                if not content and not embed and not (files and index == 0):
+                    content = "[Mensaje sin contenido compatible]"
                 if index < len(existing):
                     await webhook.edit_message(
                         existing[index]["destination_message"],
@@ -593,6 +739,7 @@ class MirrorCog(commands.Cog):
                     "DELETE FROM mirror_messages WHERE source_message=? AND part=?",
                     (message.id, old["part"]),
                 )
+            return True
         finally:
             for file in files:
                 file.close()
@@ -604,8 +751,9 @@ class MirrorCog(commands.Cog):
             webhook = await self.webhook(channel)
             try:
                 copied = await webhook.fetch_message(row["destination_message"])
-                embed = copied.embeds[0] if copied.embeds else marker(message_id)
-                embed.set_footer(text=f"🗑️ Mensaje eliminado en origen · ID original: {message_id}")
+                embed = marker(message_id, deleted=True)
+                if copied.embeds and copied.embeds[0].type == "rich":
+                    embed.description = copied.embeds[0].description
                 # Sin content/attachments: conserva texto y archivos existentes.
                 await webhook.edit_message(
                     row["destination_message"], embed=embed, allowed_mentions=discord.AllowedMentions.none()

@@ -143,11 +143,21 @@ contenido y adjuntos copiados y añaden una marca. Se dividen textos largos sin 
 Se intenta copiar adjuntos con un máximo total de 25 MiB por mensaje y respetando el
 límite del destino. Los archivos no copiados se indican; no se archivan tarjetas enriquecidas.
 Las menciones se envían sin notificar. Las respuestas muestran el ID del mensaje referido.
-No se transmite audio, no se sincronizan posteriores cambios de estructura ni se importa historial.
+No se transmite audio ni se sincronizan posteriores cambios de estructura.
+Las copias normales no llevan etiqueta, ID ni fecha adicional. Las marcas de edición/borrado
+se mantienen. Esto no cambia las copias antiguas ya publicadas ni la hora nativa de Discord.
 
 Controles desde el destino:
 
 - `c!mirror status`: estado y canales enlazados.
+- `c!mirror history CANTIDAD` (o `historial`): importa los últimos 1–1000 mensajes **tuyos**
+  por canal de texto enlazado, anteriores al inicio de la importación. Ignora bots/webhooks,
+  omite los ya copiados y publica los seleccionados en orden cronológico. No borra canales.
+  Discord los añade al final; no pueden insertarse antes de mensajes existentes. La réplica
+  en vivo continúa y puede intercalarse. Repetir el comando omite duplicados: no busca otros
+  mensajes más antiguos para compensarlos. El límite es por ejecución y canal.
+- `c!mirror historycancel`: cancela la importación después del mensaje en curso.
+  Pausar/detener el espejo también interrumpe el trabajo. Las copias terminadas se conservan.
 - `c!mirror pause` / `c!mirror resume`: pausar/reanudar.
 - `c!mirror stop`: desconectar sin borrar las copias, canales ni webhooks existentes.
   Permite volver a ejecutar setup, con otra confirmación destructiva.

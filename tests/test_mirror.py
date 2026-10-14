@@ -11,6 +11,7 @@ from admin_modules.mirror_cog import (
     MirrorConfirmation,
     MirrorSetupView,
     MirrorStore,
+    marker,
     message_parts,
     permitted_message,
 )
@@ -110,6 +111,7 @@ async def test_create_idempotent_edit_and_delete_keeps_content(store):
     await cog.replicate(msg, pair(), edited=False)
     assert webhook.send.await_count == 1
     assert webhook.send.call_args.kwargs["allowed_mentions"].everyone is False
+    assert webhook.send.call_args.kwargs["embed"] is None
     msg.content = "Updated"
     await cog.replicate(msg, pair(), edited=True)
     assert webhook.edit_message.call_args.kwargs["content"] == "Updated"
@@ -117,7 +119,121 @@ async def test_create_idempotent_edit_and_delete_keeps_content(store):
     kwargs = webhook.edit_message.call_args.kwargs
     assert "content" not in kwargs and "attachments" not in kwargs
     assert "eliminado" in kwargs["embed"].footer.text
+    assert "ID original" not in kwargs["embed"].footer.text
+    assert kwargs["embed"].timestamp is None
     assert store.messages(msg.id)
+
+
+def test_marker_has_no_normal_footer_or_timestamp():
+    assert marker(1001) is None
+    for kwargs in ({"edited": True}, {"deleted": True}, {"notes": "Archivo no disponible"}):
+        embed = marker(1001, **kwargs)
+        assert embed.timestamp is None
+        assert "1001" not in str(embed.to_dict())
+        assert "Copia experimental" not in str(embed.to_dict())
+
+
+@pytest.mark.asyncio
+async def test_empty_unsupported_message_remains_sendable(store):
+    seed(store)
+    cog = MirrorCog(SimpleNamespace(get_guild=lambda _: SimpleNamespace(filesize_limit=10_000_000)))
+    cog.store = store
+    cog.pairs = {1: pair()}
+    webhook = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(id=2001)))
+    cog.webhook = AsyncMock(return_value=webhook)
+    msg = message()
+    msg.content = ""
+    assert await cog.replicate(msg, pair(), edited=False)
+    assert webhook.send.call_args.kwargs["content"] == "[Mensaje sin contenido compatible]"
+
+
+async def history_stream(messages):
+    for msg in messages:
+        yield msg
+
+
+@pytest.mark.asyncio
+async def test_history_counts_only_owner_and_reverses_selected_messages():
+    cog = MirrorCog(SimpleNamespace())
+    messages = [message(author=11), message(bot=True), message(webhook=3), message(), message(), message()]
+    for i, msg in enumerate(messages):
+        msg.id = 1100 - i
+    channel = SimpleNamespace(history=Mock(return_value=history_stream(messages)))
+    cutoff = datetime.now(UTC)
+    ids = await cog.collect_history_ids(channel, pair(), 2, cutoff, lambda: None)
+    assert ids == [1096, 1097]
+    channel.history.assert_called_once_with(limit=None, before=cutoff, oldest_first=False)
+
+
+@pytest.mark.asyncio
+async def test_history_skips_existing_and_fetches_before_copy(store):
+    seed(store)
+    store.write("INSERT INTO mirror_messages VALUES (1001, 0, 101, 2001)")
+    old, new = message(), message()
+    new.id = 1002
+    channel = old.channel
+    channel.history = Mock(return_value=history_stream([new, old]))
+    channel.fetch_message = AsyncMock(return_value=new)
+    bot = SimpleNamespace(
+        get_channel=lambda _: channel,
+        get_guild=lambda _: SimpleNamespace(owner_id=10, filesize_limit=10_000_000),
+    )
+    cog = MirrorCog(bot)
+    cog.store = store
+    cog.pairs = {1: pair()}
+    webhook = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(id=2002)))
+    cog.webhook = AsyncMock(return_value=webhook)
+    ctx = SimpleNamespace(send=AsyncMock())
+    await cog.import_history(ctx, 1, 2, 2)
+    channel.fetch_message.assert_awaited_once_with(1002)
+    webhook.send.assert_awaited_once()
+    assert store.messages(1002)[0]["destination_message"] == 2002
+    assert "1 mensajes copiados; 1 omitidos" in ctx.send.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_history_checks_state_and_owner():
+    cog = MirrorCog(SimpleNamespace(get_guild=lambda _: SimpleNamespace(owner_id=11)))
+    cog.pairs = {1: pair()}
+    with pytest.raises(ValueError):
+        cog.history_pair(1, 2)
+    cog.bot.get_guild = lambda _: SimpleNamespace(owner_id=10)
+    cog.pairs[1]["state"] = "paused"
+    with pytest.raises(ValueError):
+        cog.history_pair(1, 2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("amount", [0, -1, 1001])
+async def test_history_rejects_invalid_amount(amount):
+    cog = MirrorCog(SimpleNamespace())
+    ctx = SimpleNamespace(reply=AsyncMock())
+    await cog.history.callback(cog, ctx, amount)
+    assert not cog.history_tasks
+    ctx.reply.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_history_cancel_is_cooperative():
+    task = SimpleNamespace(cancel=Mock())
+    cog = MirrorCog(SimpleNamespace())
+    cog.history_tasks[2] = task
+    ctx = SimpleNamespace(guild=SimpleNamespace(id=2), reply=AsyncMock())
+    await cog.history_cancel.callback(cog, ctx)
+    assert task.cancel_requested
+    task.cancel.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_history_rejects_second_concurrent_job():
+    cog = MirrorCog(SimpleNamespace())
+    cog.pairs = {1: pair()}
+    task = SimpleNamespace()
+    cog.history_tasks[2] = task
+    ctx = SimpleNamespace(guild=SimpleNamespace(id=2), reply=AsyncMock())
+    await cog.history.callback(cog, ctx, 50)
+    assert cog.history_tasks[2] is task
+    assert "en curso" in ctx.reply.call_args.args[0]
 
 
 @pytest.mark.asyncio
