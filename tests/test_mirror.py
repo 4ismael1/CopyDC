@@ -168,6 +168,7 @@ async def test_history_counts_only_owner_and_reverses_selected_messages():
 @pytest.mark.asyncio
 async def test_history_skips_existing_and_fetches_before_copy(store):
     seed(store)
+    store.write("INSERT INTO mirror_channels VALUES (102, 1, 202, 302)")
     store.write("INSERT INTO mirror_messages VALUES (1001, 0, 101, 2001)")
     old, new = message(), message()
     new.id = 1002
@@ -175,7 +176,7 @@ async def test_history_skips_existing_and_fetches_before_copy(store):
     channel.history = Mock(return_value=history_stream([new, old]))
     channel.fetch_message = AsyncMock(return_value=new)
     bot = SimpleNamespace(
-        get_channel=lambda _: channel,
+        get_channel=Mock(side_effect=lambda channel_id: channel if channel_id == 101 else None),
         get_guild=lambda _: SimpleNamespace(owner_id=10, filesize_limit=10_000_000),
     )
     cog = MirrorCog(bot)
@@ -183,12 +184,29 @@ async def test_history_skips_existing_and_fetches_before_copy(store):
     cog.pairs = {1: pair()}
     webhook = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(id=2002)))
     cog.webhook = AsyncMock(return_value=webhook)
-    ctx = SimpleNamespace(send=AsyncMock())
+    ctx = SimpleNamespace(send=AsyncMock(), channel=SimpleNamespace(id=201))
     await cog.import_history(ctx, 1, 2, 2)
     channel.fetch_message.assert_awaited_once_with(1002)
+    bot.get_channel.assert_called_once_with(101)
     webhook.send.assert_awaited_once()
     assert store.messages(1002)[0]["destination_message"] == 2002
     assert "1 mensajes copiados; 1 omitidos" in ctx.send.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_history_in_unlinked_destination_channel_reads_no_history(store):
+    seed(store)
+    bot = SimpleNamespace(
+        get_channel=Mock(),
+        get_guild=lambda _: SimpleNamespace(owner_id=10),
+    )
+    cog = MirrorCog(bot)
+    cog.store = store
+    cog.pairs = {1: pair()}
+    ctx = SimpleNamespace(send=AsyncMock(), channel=SimpleNamespace(id=999))
+    await cog.import_history(ctx, 1, 2, 10)
+    bot.get_channel.assert_not_called()
+    assert "no está enlazado" in ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio

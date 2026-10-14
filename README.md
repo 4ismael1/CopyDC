@@ -151,11 +151,12 @@ Controles desde el destino:
 
 - `c!mirror status`: estado y canales enlazados.
 - `c!mirror history CANTIDAD` (o `historial`): importa los últimos 1–1000 mensajes **tuyos**
-  por canal de texto enlazado, anteriores al inicio de la importación. Ignora bots/webhooks,
+  únicamente del origen enlazado al **canal espejo donde ejecutas el comando**, anteriores
+  al inicio de la importación. No recorre los demás canales. Rechaza canales sin enlace. Ignora bots/webhooks,
   omite los ya copiados y publica los seleccionados en orden cronológico. No borra canales.
   Discord los añade al final; no pueden insertarse antes de mensajes existentes. La réplica
   en vivo continúa y puede intercalarse. Repetir el comando omite duplicados: no busca otros
-  mensajes más antiguos para compensarlos. El límite es por ejecución y canal.
+  mensajes más antiguos para compensarlos. El límite es por ejecución en el canal actual.
 - `c!mirror historycancel`: cancela la importación después del mensaje en curso.
   Pausar/detener el espejo también interrumpe el trabajo. Las copias terminadas se conservan.
 - `c!mirror pause` / `c!mirror resume`: pausar/reanudar.

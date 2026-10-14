@@ -230,7 +230,7 @@ class MirrorCog(commands.Cog):
             "Elimina TODOS los canales/categorías del destino tras confirmar su ID; el historial no es recuperable.\n"
             "Clona categorías, texto y voz (sin audio). No copia roles, permisos, historial, hilos, foros ni escenarios.\n"
             "Ignora bots/webhooks. Conserva las copias borradas en origen.\n"
-            "Historial: `c!mirror history CANTIDAD` (1–1000 mensajes tuyos por canal); `c!mirror historycancel`.\n"
+            "Historial: `c!mirror history CANTIDAD` (1–1000 mensajes tuyos, solo en este canal espejo); `c!mirror historycancel`.\n"
             "Controles: `c!mirror status`, `c!mirror pause`, `c!mirror resume`, `c!mirror stop`.",
             mention_author=False,
         )
@@ -459,7 +459,7 @@ class MirrorCog(commands.Cog):
     async def history(self, ctx, amount: int):
         if not 1 <= amount <= 1000:
             await ctx.reply(
-                "Indica entre 1 y 1000 mensajes tuyos por canal y ejecución.", mention_author=False
+                "Indica entre 1 y 1000 mensajes tuyos para este canal espejo.", mention_author=False
             )
             return
         destination = ctx.guild.id
@@ -516,21 +516,27 @@ class MirrorCog(commands.Cog):
             return self.history_pair(source, destination)
 
         try:
+            pair = check()
+            channels = await asyncio.to_thread(
+                self.store.rows,
+                "SELECT * FROM mirror_channels WHERE source=? AND destination_channel=?",
+                (source, ctx.channel.id),
+            )
+            if not channels:
+                raise ValueError(
+                    "Este canal no está enlazado al origen. Ejecuta el comando dentro del canal espejo que quieras rellenar"
+                )
             await ctx.send(
-                f"Importando hasta {amount} mensajes tuyos recientes por canal enlazado, sin bots/webhooks "
+                f"Importando hasta {amount} mensajes tuyos recientes solo para este canal espejo, sin bots/webhooks "
                 "ni duplicados. Se añaden al final del destino: Discord no permite insertarlos antes de las copias existentes. "
                 "Puedes cancelar con `c!mirror historycancel`.",
                 allowed_mentions=discord.AllowedMentions.none(),
-            )
-            pair = check()
-            channels = await asyncio.to_thread(
-                self.store.rows, "SELECT * FROM mirror_channels WHERE source=?", (source,)
             )
             for mapping in channels:
                 check()
                 channel = self.bot.get_channel(mapping["source_channel"])
                 if not isinstance(channel, discord.TextChannel):
-                    continue
+                    raise ValueError("El canal de origen enlazado ya no está disponible")
                 ids = await self.collect_history_ids(channel, pair, amount, cutoff, check)
                 for message_id in ids:
                     check()
