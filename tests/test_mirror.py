@@ -79,9 +79,9 @@ def test_stop_then_reconfigure_removes_old_mappings_only(store):
 
 @pytest.mark.parametrize(
     "author,bot,webhook,expected",
-    [(10, False, None, True), (11, False, None, False), (10, True, None, False), (10, False, 9, False)],
+    [(10, False, None, True), (11, False, None, True), (10, True, None, False), (10, False, 9, False)],
 )
-def test_ignore_other_people_bots_webhooks(author, bot, webhook, expected):
+def test_copies_everyone_but_ignores_bots_webhooks(author, bot, webhook, expected):
     assert permitted_message(message(author, bot, webhook), pair()) == expected
 
 
@@ -153,7 +153,7 @@ async def history_stream(messages):
 
 
 @pytest.mark.asyncio
-async def test_history_counts_only_owner_and_reverses_selected_messages():
+async def test_history_counts_all_users_and_reverses_selected_messages():
     cog = MirrorCog(SimpleNamespace())
     messages = [message(author=11), message(bot=True), message(webhook=3), message(), message(), message()]
     for i, msg in enumerate(messages):
@@ -161,7 +161,7 @@ async def test_history_counts_only_owner_and_reverses_selected_messages():
     channel = SimpleNamespace(history=Mock(return_value=history_stream(messages)))
     cutoff = datetime.now(UTC)
     ids = await cog.collect_history_ids(channel, pair(), 2, cutoff, lambda: None)
-    assert ids == [1096, 1097]
+    assert ids == [1097, 1100]
     channel.history.assert_called_once_with(limit=None, before=cutoff, oldest_first=False)
 
 
@@ -210,8 +210,8 @@ async def test_history_in_unlinked_destination_channel_reads_no_history(store):
 
 
 @pytest.mark.asyncio
-async def test_history_checks_state_and_owner():
-    cog = MirrorCog(SimpleNamespace(get_guild=lambda _: SimpleNamespace(owner_id=11)))
+async def test_history_checks_state_and_guilds():
+    cog = MirrorCog(SimpleNamespace(get_guild=lambda _: None))
     cog.pairs = {1: pair()}
     with pytest.raises(ValueError):
         cog.history_pair(1, 2)
@@ -305,7 +305,7 @@ def test_validate_rejects_same_server_or_other_owner():
     cog = MirrorCog(SimpleNamespace(owner_id=10, get_guild=lambda _: guild))
     with pytest.raises(ValueError, match="distintos"):
         cog.validate(1, 1, 10)
-    with pytest.raises(ValueError, match="propietario"):
+    with pytest.raises(ValueError, match="dueño de Copy"):
         cog.validate(1, 2, 99)
 
 
@@ -350,11 +350,65 @@ async def test_setup_writes_only_to_destination_and_stops_on_failure(store, fail
 
 
 @pytest.mark.asyncio
-async def test_setup_controls_reject_non_owner():
+async def test_setup_controls_silently_reject_non_owner():
     view = MirrorSetupView(
         SimpleNamespace(), SimpleNamespace(id=1, channels=[]), SimpleNamespace(id=2, channels=[]), 10
     )
     interaction = SimpleNamespace(
-        user=SimpleNamespace(id=11), response=SimpleNamespace(send_message=AsyncMock())
+        user=SimpleNamespace(id=11),
+        response=SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock()),
     )
     assert not await view.interaction_check(interaction)
+    interaction.response.send_message.assert_not_called()
+    interaction.response.defer.assert_awaited_once()
+
+
+def test_mirror_commands_hidden_and_owner_only():
+    cog = MirrorCog(SimpleNamespace())
+    assert cog.mirror.hidden
+    for command in cog.mirror.walk_commands():
+        assert command.checks, command.name
+
+
+def test_validate_does_not_require_owning_servers():
+    guild = SimpleNamespace(
+        owner_id=999, unavailable=False, features=[], text_channels=[], channels=[],
+        me=SimpleNamespace(guild_permissions=SimpleNamespace(administrator=True)),
+    )
+    cog = MirrorCog(SimpleNamespace(owner_id=10, get_guild=lambda _: guild, intents=SimpleNamespace(message_content=True)))
+    # Pasa la comprobación de dueño y llega a la siguiente validación (origen sin canales).
+    with pytest.raises(ValueError, match="al menos un canal"):
+        cog.validate(1, 2, 10)
+
+
+@pytest.mark.asyncio
+async def test_reply_links_to_destination_copy(store):
+    seed(store)
+    store.write("INSERT INTO mirror_messages VALUES (1000, 0, 101, 2000)")
+    cog = MirrorCog(SimpleNamespace(get_guild=lambda _: SimpleNamespace(filesize_limit=10_000_000)))
+    cog.store = store
+    cog.pairs = {1: pair()}
+    webhook = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(id=2001)))
+    cog.webhook = AsyncMock(return_value=webhook)
+    original = Mock(spec=discord.Message)
+    original.content, original.attachments = "probando login", []
+    original.author = SimpleNamespace(display_name="Ana")
+    msg = message(author=11)
+    msg.content = "ya funciona"
+    msg.reference = SimpleNamespace(message_id=1000, resolved=original, type=None)
+    await cog.replicate(msg, pair(), edited=False)
+    content = webhook.send.call_args.kwargs["content"]
+    assert content.startswith("> ↪️ **Ana**: probando login")
+    assert "https://discord.com/channels/2/201/2000" in content
+    assert content.endswith("\nya funciona")
+    assert webhook.send.call_args.kwargs["embed"] is None
+
+
+@pytest.mark.asyncio
+async def test_reply_to_unknown_message_has_no_link(store):
+    cog = MirrorCog(SimpleNamespace())
+    cog.store = store
+    msg = message()
+    msg.reference = SimpleNamespace(message_id=5, resolved=None, type=None)
+    header = await cog.reply_header(msg, pair())
+    assert "no disponible" in header and "discord.com" not in header

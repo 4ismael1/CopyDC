@@ -1,4 +1,4 @@
-"""Espejo experimental del owner: origen de solo lectura, escrituras en destino."""
+"""Espejo experimental: comandos solo del dueño de Copy; replica mensajes de todos los usuarios."""
 
 import asyncio
 import io
@@ -78,15 +78,16 @@ def permitted_message(message, pair):
     return (
         message.guild is not None
         and message.guild.id == pair["source"]
-        and message.author.id == pair["owner"]
         and not message.author.bot
         and not message.webhook_id
         and isinstance(message.channel, discord.TextChannel)
     )
 
 
-def message_parts(message):
+def message_parts(message, header=""):
     content = message.content or ""
+    if header:
+        content = f"{header}\n{content}" if content else header
     # Embeds de otros bots no se copian; las tarjetas/link previews se regeneran por Discord.
     if message.stickers:
         content += "\n" + "\n".join(str(sticker.url) for sticker in message.stickers)
@@ -141,7 +142,8 @@ class MirrorSetupView(ui.View):
 
     async def interaction_check(self, interaction):
         if interaction.user.id != self.owner:
-            await interaction.response.send_message("Solo el propietario puede confirmar.", ephemeral=True)
+            # Silencioso para terceros: se reconoce la interacción sin mostrar nada.
+            await interaction.response.defer()
             return False
         return True
 
@@ -192,8 +194,8 @@ class MirrorCog(commands.Cog):
         destination = self.bot.get_guild(destination_id)
         if not source or not destination or source_id == destination_id:
             raise ValueError("Origen y destino deben ser distintos y Copy debe estar en ambos.")
-        if owner != self.bot.owner_id or source.owner_id != owner or destination.owner_id != owner:
-            raise ValueError("Solo el dueño de Copy puede usarlo y debe ser propietario de ambos servidores.")
+        if owner != self.bot.owner_id:
+            raise ValueError("Solo el dueño de Copy puede usarlo.")
         if source.unavailable or destination.unavailable:
             raise ValueError("Uno de los servidores no está disponible. Inténtalo más tarde.")
         if not destination.me or not destination.me.guild_permissions.administrator:
@@ -220,17 +222,17 @@ class MirrorCog(commands.Cog):
                 raise ValueError("Un servidor ya pertenece a un espejo. Detén esa conexión primero.")
         return source, destination
 
-    @commands.group(name="mirror", invoke_without_command=True)
+    @commands.group(name="mirror", invoke_without_command=True, hidden=True)
     @commands.is_owner()
     @commands.guild_only()
     async def mirror(self, ctx):
         await ctx.reply(
-            "**Espejo experimental (solo tus mensajes)**\n"
+            "**Espejo experimental (mensajes de todos los usuarios)**\n"
             "Ejecuta desde el destino: `c!mirror setup ID_ORIGEN`.\n"
             "Elimina TODOS los canales/categorías del destino tras confirmar su ID; el historial no es recuperable.\n"
             "Clona categorías, texto y voz (sin audio). No copia roles, permisos, historial, hilos, foros ni escenarios.\n"
             "Ignora bots/webhooks. Conserva las copias borradas en origen.\n"
-            "Historial: `c!mirror history CANTIDAD` (1–1000 mensajes tuyos, solo en este canal espejo); `c!mirror historycancel`.\n"
+            "Historial: `c!mirror history CANTIDAD` (1–1000 mensajes, solo en este canal espejo); `c!mirror historycancel`.\n"
             "Controles: `c!mirror status`, `c!mirror pause`, `c!mirror resume`, `c!mirror stop`.",
             mention_author=False,
         )
@@ -260,7 +262,7 @@ class MirrorCog(commands.Cog):
                 f"Se copiarán {len(source.categories)} categorías, {len(source.text_channels)} canales de texto "
                 f"y {len(source.voice_channels)} de voz. Se omitirán {len(unsupported)} canales no compatibles "
                 "y todos los hilos. No se copiarán roles, permisos ni historial.\n\n"
-                "El origen no se modifica. Solo se replicarán tus mensajes nuevos; bots/webhooks se ignoran. "
+                "El origen no se modifica. Se replicarán los mensajes nuevos de todos los usuarios; bots/webhooks se ignoran. "
                 "Los borrados se conservan con una marca. Confirma escribiendo el ID del DESTINO."
             ),
         )
@@ -338,7 +340,7 @@ class MirrorCog(commands.Cog):
                 await self.report(
                     interaction,
                     destination,
-                    "Espejo activo. Se copian solo tus mensajes nuevos. Bots/webhooks ignorados. Los canales anteriores del destino y su historial fueron eliminados y no se pueden recuperar.",
+                    "Espejo activo. Se copian los mensajes nuevos de todos los usuarios. Bots/webhooks ignorados. Los canales anteriores del destino y su historial fueron eliminados y no se pueden recuperar.",
                 )
             except Exception as exc:
                 if began:
@@ -387,7 +389,7 @@ class MirrorCog(commands.Cog):
             f"Origen: `{pair['source']}` → destino: `{pair['destination']}`\n"
             f"Estado: **{pair['state']}** · canales de texto enlazados: {len(channels)} · cola: {self.queue.qsize()}\n"
             f"Importación de historial: {'en curso' if ctx.guild.id in self.history_tasks else 'inactiva'}.\n"
-            "Solo mensajes del propietario. Historial manual: `c!mirror history CANTIDAD`. "
+            "Se replican mensajes de todos los usuarios. Historial manual: `c!mirror history CANTIDAD`. "
             "Sin recuperación automática de eventos perdidos durante apagados/pausas. "
             "Si una configuración falló, usa stop antes de repetir setup.",
             mention_author=False,
@@ -447,10 +449,8 @@ class MirrorCog(commands.Cog):
             or pair["state"] != "active"
             or not original
             or not target
-            or original.owner_id != pair["owner"]
-            or target.owner_id != pair["owner"]
         ):
-            raise ValueError("El espejo ya no está activo o cambió su propietario/destino.")
+            raise ValueError("El espejo ya no está activo o cambió su destino.")
         return pair
 
     @mirror.command(name="history", aliases=["historial"])
@@ -459,7 +459,7 @@ class MirrorCog(commands.Cog):
     async def history(self, ctx, amount: int):
         if not 1 <= amount <= 1000:
             await ctx.reply(
-                "Indica entre 1 y 1000 mensajes tuyos para este canal espejo.", mention_author=False
+                "Indica entre 1 y 1000 mensajes para este canal espejo.", mention_author=False
             )
             return
         destination = ctx.guild.id
@@ -527,7 +527,7 @@ class MirrorCog(commands.Cog):
                     "Este canal no está enlazado al origen. Ejecuta el comando dentro del canal espejo que quieras rellenar"
                 )
             await ctx.send(
-                f"Importando hasta {amount} mensajes tuyos recientes solo para este canal espejo, sin bots/webhooks "
+                f"Importando hasta {amount} mensajes recientes solo para este canal espejo, sin bots/webhooks "
                 "ni duplicados. Se añaden al final del destino: Discord no permite insertarlos antes de las copias existentes. "
                 "Puedes cancelar con `c!mirror historycancel`.",
                 allowed_mentions=discord.AllowedMentions.none(),
@@ -623,12 +623,7 @@ class MirrorCog(commands.Cog):
                         continue
                     original = self.bot.get_guild(source)
                     destination = self.bot.get_guild(pair["destination"])
-                    if (
-                        not original
-                        or not destination
-                        or original.owner_id != pair["owner"]
-                        or destination.owner_id != pair["owner"]
-                    ):
+                    if not original or not destination:
                         await asyncio.to_thread(self.store.state, source, "paused")
                         await self.reload_pairs()
                         continue
@@ -638,7 +633,7 @@ class MirrorCog(commands.Cog):
                         await self.replicate(payload, pair, edited=False)
                     else:
                         channel_id, message_id = payload
-                        # No importar mensajes anteriores al setup ni mensajes de otros autores.
+                        # No importar mensajes anteriores al setup ni de bots/webhooks.
                         if not await asyncio.to_thread(self.store.messages, message_id):
                             continue
                         channel = self.bot.get_channel(channel_id)
@@ -674,6 +669,35 @@ class MirrorCog(commands.Cog):
             raise ValueError("Webhook movido fuera del destino configurado")
         return webhook
 
+    async def reply_header(self, message, pair):
+        """Imita una respuesta: los webhooks no pueden enviar message_reference."""
+        reference = message.reference
+        if not reference or not reference.message_id:
+            return ""
+        forward = getattr(discord, "MessageReferenceType", None)
+        if forward and getattr(reference, "type", None) == forward.forward:
+            return ""
+        resolved = reference.resolved if isinstance(reference.resolved, discord.Message) else None
+        if resolved:
+            text = " ".join((resolved.content or "").split())
+            snippet = text[:80] + ("…" if len(text) > 80 else "")
+            if not snippet and resolved.attachments:
+                snippet = "[adjunto]"
+            header = f"> ↪️ **{discord.utils.escape_markdown(resolved.author.display_name)}**"
+            if snippet:
+                header += f": {discord.utils.escape_markdown(snippet)}"
+        else:
+            header = "> ↪️ *Respuesta a un mensaje no disponible*"
+        rows = await asyncio.to_thread(self.store.messages, reference.message_id)
+        if rows:
+            mapping = await asyncio.to_thread(self.store.channel, rows[0]["source_channel"])
+            if mapping:
+                header += (
+                    f" · [ir al mensaje](https://discord.com/channels/{pair['destination']}/"
+                    f"{mapping['destination_channel']}/{rows[0]['destination_message']})"
+                )
+        return header
+
     async def replicate(self, message, pair, *, edited):
         if not permitted_message(message, pair):
             return False
@@ -684,12 +708,10 @@ class MirrorCog(commands.Cog):
         if existing and not edited:
             return False
         webhook = await self.webhook(channel)
-        parts = message_parts(message)
+        parts = message_parts(message, await self.reply_header(message, pair))
         files = []
         downloaded_bytes = 0
         notes = []
-        if message.reference and message.reference.message_id:
-            notes.append(f"Respuesta al mensaje original {message.reference.message_id}")
         if message.embeds:
             notes.append("Las tarjetas enriquecidas no se archivan; se conserva el texto/enlace original.")
         try:

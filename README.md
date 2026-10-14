@@ -119,12 +119,13 @@ raíz del proyecto. El archivo está excluido de Git.
 - Las pestañas mantienen resumen, miembros/canales, roles/emojis, seguridad/Nitro y permisos.
 - Al volver de una ficha se conserva la búsqueda y página. Los conteos de humanos/bots son de caché.
 
-## Espejo experimental (solo mensajes del propietario)
+## Espejo experimental (mensajes de todos los usuarios)
 
 **Úsalo únicamente en servidores de prueba propios. El setup destruye los canales y
 el historial del DESTINO, incluidos sus hilos. No hay recuperación automática.**
 
-1. Copy debe estar en ambos servidores, y su propietario configurado debe ser dueño de ambos.
+1. Copy debe estar en ambos servidores. Solo el dueño de Copy puede usar `c!mirror`; para
+   cualquier otro usuario los comandos no responden nada, como si no existieran.
 2. El destino debe tener Comunidad desactivada y Copy debe tener Administrador allí.
    En el origen requiere ver canales y leer historial; Message Content debe estar habilitado.
 3. Desde el **destino**, ejecuta `c!mirror setup ID_ORIGEN`.
@@ -133,7 +134,7 @@ el historial del DESTINO, incluidos sus hilos. No hay recuperación automática.
    permisos, historial, hilos, foros o escenarios. Los permisos del destino se heredan;
    no introduzcas otros participantes sin revisar sus accesos.
 
-Se replican únicamente mensajes nuevos del propietario, ignorando bots y webhooks.
+Se replican los mensajes nuevos de todos los usuarios humanos, ignorando bots y webhooks.
 El origen es de solo lectura: no se crean webhooks allí, no se envían respuestas ni se
 modifican canales o mensajes. Las acciones administrativas del destino sí aparecen en
 su auditoría; esto no desactiva auditorías, registros ajenos ni registros internos de Discord.
@@ -142,7 +143,7 @@ Las ediciones actualizan la copia. Los borrados, incluidos los masivos, conserva
 contenido y adjuntos copiados y añaden una marca. Se dividen textos largos sin truncarlos.
 Se intenta copiar adjuntos con un máximo total de 25 MiB por mensaje y respetando el
 límite del destino. Los archivos no copiados se indican; no se archivan tarjetas enriquecidas.
-Las menciones se envían sin notificar. Las respuestas muestran el ID del mensaje referido.
+Las menciones se envían sin notificar. Las respuestas se imitan con una cita del autor/texto original y un enlace a su copia en el destino (los webhooks no admiten respuestas reales).
 No se transmite audio ni se sincronizan posteriores cambios de estructura.
 Las copias normales no llevan etiqueta, ID ni fecha adicional. Las marcas de edición/borrado
 se mantienen. Esto no cambia las copias antiguas ya publicadas ni la hora nativa de Discord.
@@ -150,7 +151,7 @@ se mantienen. Esto no cambia las copias antiguas ya publicadas ni la hora nativa
 Controles desde el destino:
 
 - `c!mirror status`: estado y canales enlazados.
-- `c!mirror history CANTIDAD` (o `historial`): importa los últimos 1–1000 mensajes **tuyos**
+- `c!mirror history CANTIDAD` (o `historial`): importa los últimos 1–1000 mensajes (de cualquier usuario)
   únicamente del origen enlazado al **canal espejo donde ejecutas el comando**, anteriores
   al inicio de la importación. No recorre los demás canales. Rechaza canales sin enlace. Ignora bots/webhooks,
   omite los ya copiados y publica los seleccionados en orden cronológico. No borra canales.
